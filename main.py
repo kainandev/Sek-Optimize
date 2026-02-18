@@ -1,6 +1,8 @@
 import tkinter as tk
 from gui import GUI
-from app import App
+from app.app import App
+
+from app.fetch import FastFetch
 
 def main():
     root = tk.Tk()

@@ -1,4 +1,4 @@
-from app import *
+from app.app import *
 
 # ==========================================
 # RESOURCE PATH (PYINSTALLER)

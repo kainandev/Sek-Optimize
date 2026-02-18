@@ -17,7 +17,7 @@ from collections import defaultdict
 # Modulos Útil
 from util.system_details import *
 
-VERSION_SOFTWARE = "0.1.1"
+VERSION_SOFTWARE = "0.1.2"
 
 APP_ASCII = [
 "           .:===++++++===:.           ",
