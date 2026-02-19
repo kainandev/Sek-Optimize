@@ -1,7 +1,6 @@
 from config import *
-from app.fetch import FastFetch
 
-class App(FastFetch):
+class App:
     def __init__(self):
         super().__init__()
 

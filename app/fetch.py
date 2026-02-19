@@ -1,6 +1,6 @@
-from config import *
+from app.app import *
 
-class FastFetch:
+class FastFetch(App):
 	def __init__(self):
 		pass
 
