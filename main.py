@@ -1,20 +1,22 @@
 import tkinter as tk
 from gui import GUI
-from app.app import App
+from app.main import MainApp
 
-from app.fetch import FastFetch
 
 def main():
     root = tk.Tk()
 
-    app_instance = App()
-    gui = GUI(root, app_instance)
+    # MainApp une todos os modulos via heranca multipla
+    app_instance = MainApp()
 
+    gui = GUI(root, app_instance)
     app_instance.set_gui(gui)
 
+    # Exibe o fetch inicial apos a GUI estar pronta
     app_instance.show_fetch()
 
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

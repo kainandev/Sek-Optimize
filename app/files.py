@@ -1,55 +1,66 @@
-from app.app import *
+from config import *
+from app.app import App
+
 
 class Files(App):
-	def __init__(self):
-		super().__init__(self)
+    def __init__(self):
+        super().__init__()
 
-	def clean_temp(self):
-		user_temp = os.environ.get("TEMP")
-		windows_temp = r"C:\Windows\Temp"
+    # ============================================================
+    # LIMPEZA DE TEMPORARIOS
+    # Envolve Python para calcular tamanho antes de deletar
+    # ============================================================
+    def clean_temp(self):
+        user_temp    = os.environ.get("TEMP", r"C:\Users\Public\AppData\Local\Temp")
+        windows_temp = r"C:\Windows\Temp"
 
-		# ================= TEMP DO USUÁRIO =================
-		size_gb_user, file_count_user = self.get_folder_info(user_temp)
+        for folder, titulo in (
+            (user_temp,    "LIMPEZA DE TEMP DO USUARIO"),
+            (windows_temp, "LIMPEZA DE TEMP DO WINDOWS"),
+        ):
+            size_gb, file_count = self.get_folder_info(folder)
+            self.log("")
+            self.log("=" * 50)
+            self.log(titulo.center(50))
+            self.log("=" * 50)
+            self.log(f"Pasta           : {folder}")
+            self.log("-" * 50)
+            self.log(f"Total arquivos  : {file_count}")
+            self.log(f"Tamanho ocupado : {size_gb} GB")
+            self.log("")
+            self.run_command(
+                f"Limpando {titulo}",
+                rf'del /q /f /s "{folder}\*.*"'
+            )
 
-		user_header = [
-			"",
-			"=" * 50,
-			"        LIMPEZA DE ARQUIVOS TEMP (USUÁRIO)",
-			"=" * 50,
-			f"Pasta analisada : {user_temp}",
-			"-" * 50,
-			f"Total de arquivos : {file_count_user}",
-			f"Tamanho ocupado  : {size_gb_user} GB",
-			"",
-		]
+    # ============================================================
+    # LIMPEZA DE PREFETCH - delega ao COMMANDS
+    # ============================================================
+    def clean_prefetch(self):
+        folder = r"C:\Windows\Prefetch"
+        size_gb, file_count = self.get_folder_info(folder)
+        self.log("")
+        self.log("=" * 50)
+        self.log("PASTA PREFETCH".center(50))
+        self.log("=" * 50)
+        self.log(f"Pasta           : {folder}")
+        self.log(f"Total arquivos  : {file_count}")
+        self.log(f"Tamanho ocupado : {size_gb} GB")
+        self.log("")
+        self.run_command("Limpando Prefetch", COMMANDS["clean_prefetch"])
 
-		for line in user_header:
-			self.log(line)
-
-		self.run_command(
-			"Iniciando limpeza do TEMP do usuário",
-			rf'del /q /f /s "{user_temp}\*.*"'
-		)
-
-		# ================= TEMP DO WINDOWS =================
-		size_gb_win, file_count_win = self.get_folder_info(windows_temp)
-
-		win_header = [
-			"",
-			"=" * 50,
-			"        LIMPEZA TEMP DO WINDOWS",
-			"=" * 50,
-			f"Pasta analisada : {windows_temp}",
-			"-" * 50,
-			f"Total de arquivos : {file_count_win}",
-			f"Tamanho ocupado  : {size_gb_win} GB",
-			"",
-		]
-
-		for line in win_header:
-			self.log(line)
-
-		self.run_command(
-			"Iniciando limpeza do TEMP do Windows",
-			rf'del /q /f /s "{windows_temp}\*.*"'
-		)
+    # ============================================================
+    # CACHE DO WINDOWS UPDATE - delega ao COMMANDS
+    # ============================================================
+    def clean_windows_update(self):
+        folder = r"C:\Windows\SoftwareDistribution\Download"
+        size_gb, file_count = self.get_folder_info(folder)
+        self.log("")
+        self.log("=" * 50)
+        self.log("CACHE DO WINDOWS UPDATE".center(50))
+        self.log("=" * 50)
+        self.log(f"Pasta           : {folder}")
+        self.log(f"Total arquivos  : {file_count}")
+        self.log(f"Tamanho ocupado : {size_gb} GB")
+        self.log("")
+        self.run_command("Limpando cache do Windows Update", COMMANDS["clean_windows_update"])

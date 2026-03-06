@@ -1,326 +1,136 @@
 from config import *
+from util.system_details import *
+
 
 class App:
     def __init__(self):
+        super().__init__()
+
         self.gui = None
         self.start_time = datetime.now()
-        self.log_file = self.gerar_log_file()
+        self.log_file = self._gerar_log_file()
 
-        self.show_fetch()
+        # Fila thread-safe: o log nunca chama widgets diretamente
+        self.log_queue = queue.Queue()
+
+        # Sinaliza quantas operacoes estao rodando (para a barra de progresso)
+        self._running_count = 0
+        self._running_lock = threading.Lock()
+        # show_fetch e chamado externamente apos set_gui()
 
     def set_gui(self, gui):
         self.gui = gui
 
-    # ============================================
+    # ============================================================
     # LOG CENTRAL
-    # ============================================
-    def gerar_log_file(self):
+    # Escreve na fila e no arquivo. A GUI consome a fila via polling.
+    # ============================================================
+    def _gerar_log_file(self):
         hostname = socket.gethostname()
         data_hora = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         nome = f"{hostname}-{data_hora}.log"
-
-        pasta_logs = "logs"
-        os.makedirs(pasta_logs, exist_ok=True)
-
-        return os.path.join(pasta_logs, nome)
+        pasta = "logs"
+        os.makedirs(pasta, exist_ok=True)
+        return os.path.join(pasta, nome)
 
     def log(self, msg):
         timestamp = datetime.now().strftime("[%d/%m/%Y %H:%M:%S] ")
-        texto = timestamp + msg
+        texto = timestamp + str(msg)
 
-        # Interface
-        self.gui.add_log(texto)
+        # Enfileira para a GUI consumir na thread principal
+        self.log_queue.put(texto)
 
-        # Arquivo
-        with open(self.log_file, "a", encoding="utf-8", errors="replace") as f:
-            f.write(texto + "\n")
-
-
-    def _decode(self, raw):
+        # Salva no arquivo diretamente (thread-safe pois e IO sequencial)
         try:
-            return raw.decode("cp850", errors="replace")
-        except Exception:
-            return raw.decode("latin-1", errors="replace")
+            with open(self.log_file, "a", encoding="utf-8", errors="replace") as f:
+                f.write(texto + "\n")
+        except OSError:
+            pass
 
-
-    def run_command(self, desc, cmd):
-        self.log_title("" + desc)
-
-        with subprocess.Popen(
-            cmd, shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        ) as proc:
-            for raw in proc.stdout:
-                line = self._decode(raw).replace("\r\n", "\n")
-                self.log(line.rstrip("\n"))
-
-        self.log('')
-        self.log_info("Finalizado...")
-        self.log('')
-
-
-    # ============================================
-    # FUNÇÕES INDIVIDUAIS
-    # ============================================
-
-
-
-    def flush_dns(self):
-        self.run_command("Limpando DNS", "ipconfig /flushdns")
-
-    def run_sfc(self):
-        self.run_command("Executando SFC", "sfc /scannow")
-
-    def run_dism(self):
-        self.run_command("Executando DISM", "dism /online /cleanup-image /restorehealth")
-
-    def restart_explorer(self):
-        self.run_command(
-            "Reiniciando Explorer",
-            "taskkill /f /im explorer.exe & start explorer.exe"
-        )
-
-    def run_systeminfo(self):
-        self.run_command("SystemInfo", "systeminfo")
-
-    def run_tasklist(self):
-        self.run_command("Lista de Processos", "tasklist")
-
-    def run_driverquery(self):
-        self.run_command("Lista de Drivers", "driverquery")
-
-    def run_chkdsk(self):
-        self.run_command(
-            "Agendando verificação de disco (CHKDSK)",
-            r'chkdsk C: /f /r'
-        )
-
-    def kill_background_tasks(self):
-        self.run_command(
-            "Encerrando processos em segundo plano",
-            r'taskkill /f /im OneDrive.exe & taskkill /f /im Teams.exe'
-        )
-
-    def reset_network(self):
-        self.run_command(
-            "Resetando configurações de rede",
-            r'netsh int ip reset & netsh winsock reset & ipconfig /flushdns'
-        )
-
-    def disable_fast_startup(self):
-        self.run_command(
-            "Desativando Inicialização Rápida",
-            r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" '
-            r'/v HiberbootEnabled /t REG_DWORD /d 0 /f'
-        )
-
-    def clean_windows_update(self):
-        folder = r"C:\Windows\SoftwareDistribution\Download"
-        size_gb, file_count = self.get_folder_info(folder)
-
-        table = [
-            "==============================================",
-            "     CACHE DO WINDOWS UPDATE              ",
-            "==============================================",
-            f"Pasta            : {folder}",
-            f"Total de arquivos: {file_count}",
-            f"Tamanho ocupado : {size_gb} GB",
-            ""
-        ]
-
-        for line in table:
-            self.log(line)
-
-        self.run_command(
-            "Limpando cache do Windows Update",
-            r'net stop wuauserv & '
-            r'del /q /f /s C:\Windows\SoftwareDistribution\Download\*.* & '
-            r'net start wuauserv'
-        )
-
-    def clean_prefetch(self):
-        folder = r"C:\Windows\Prefetch"
-        size_gb, file_count = self.get_folder_info(folder)
-
-        table = [
-            "==============================================",
-            "        PASTA PREFETCH                    ",
-            "==============================================",
-            f"Pasta            : {folder}",
-            f"Total de arquivos: {file_count}",
-            f"Tamanho ocupado : {size_gb} GB",
-            ""
-        ]
-
-        for line in table:
-            self.log(line)
-
-        self.run_command(
-            "Limpando Prefetch do Windows",
-            r'del /q /f /s C:\Windows\Prefetch\*.*'
-        )
-
-    def disk_usage_report(self):
-        usage = psutil.disk_usage("C:/")
-
-        total = round(usage.total / (1024**3), 1)
-        used = round(usage.used / (1024**3), 1)
-        free = round(usage.free / (1024**3), 1)
-        percent = usage.percent
-
-        table = (
-            "\n============================================\n"
-            "          USO DO DISCO (C:)                \n"
-            "============================================\n"
-            f"Tamanho total : {total} GB\n"
-            f"Em uso        : {used} GB\n"
-            f"Livre         : {free} GB\n"
-            f"Ocupação      : {percent}%\n"
-            "============================================\n"
-        )
-
-        self.log(table)
-
-    def check_disk_surface(self):
-        self.run_command(
-            "Verificando superfície do disco (CHKDSK)",
-            "chkdsk C: /f /r"
-        )
-
-    def disk_errors(self):
-        self.run_command(
-            "Verificando erros lógicos no disco",
-            'wmic diskdrive get status'
-        )
-
-    def disk_info(self):
-        self.run_command(
-            "Informações detalhadas do disco",
-            'wmic diskdrive get model,serialnumber,size,mediatype'
-        )
-
-    def check_disk_health(self):
-        self.run_command(
-            "Verificando saúde do disco (SMART)",
-            'wmic diskdrive get model,status,interfacetype,mediatype'
-        )
-
-    def restart_print_spooler(self):
-        self.run_command(
-            "Reiniciando spooler de impressão",
-            r'net stop spooler & '
-            r'del /q /f /s C:\Windows\System32\spool\PRINTERS\*.* & '
-            r'net start spooler'
-        )
-
-    def run_system_report(self):
-        pythoncom.CoInitialize()  # Inicializa COM nesta thread
-        try:
-            self.log("")
-            self.log("=" * 60)
-            self.log("RELATÓRIO DO SISTEMA".center(60))
-            self.log("=" * 60)
-
-            self.system_report_running = True
-
-            # ================= MEMÓRIA =================
-            slots, max_ram = get_ram_capability()
-            modules = get_ram_modules()
-
-            mem_lines = [
-                "├── Capacidade",
-                f"│   ├── Slots disponíveis : {slots}",
-                f"│   └── Máximo suportado  : {max_ram} GB",
-                "├── Módulos"
-            ]
-
-            for i, m in enumerate(modules):
-                last = (i == len(modules) - 1)
-                branch = "└──" if last else "├──"
-                indent = "    " if last else "│   "
-                mem_lines.extend([
-                    f"{branch} {m['Slot']}",
-                    f"{indent}├── Capacidade (GB)  : {m['Capacidade (GB)']}",
-                    f"{indent}├── Velocidade (MHz) : {m['Velocidade (MHz)']}",
-                    f"{indent}├── Fabricante       : {m['Fabricante']}",
-                    f"{indent}├── Tipo             : {m['Tipo']}",
-                    f"{indent}└── Serial           : {m['Serial']}",
-                ])
-
-            self.log_tree("MEMÓRIA", mem_lines)
-
-            # ================= CPU =================
-            cpu = get_cpu_info()
-            self.log_tree("CPU", [
-                f"├── Modelo          : {cpu['Modelo']}",
-                f"├── Arquitetura     : {cpu['Arquitetura']}",
-                f"├── Bits            : {cpu['Bits']}",
-                f"├── Frequência Base : {cpu['Frequência Base']}",
-                f"└── Núcleos         : {cpu['Núcleos']}",
-            ])
-
-            # ================= GPU =================
-            gpus = get_gpu_info()
-            gpu_lines = []
-            for i, g in enumerate(gpus):
-                last = (i == len(gpus) - 1)
-                branch = "└──" if last else "├──"
-                indent = "    " if last else "│   "
-                gpu_lines.extend([
-                    f"{branch} {g['Nome']}",
-                    f"{indent}├── VRAM (MB) : {g['VRAM (MB)']}",
-                    f"{indent}└── Driver    : {g['Driver']}",
-                ])
-            self.log_tree("GPU", gpu_lines)
-
-            # ================= DISCOS =================
-            disks = get_disks()
-            disk_lines = []
-            for i, d in enumerate(disks):
-                last = (i == len(disks) - 1)
-                branch = "└──" if last else "├──"
-                indent = "    " if last else "│   "
-                disk_lines.extend([
-                    f"{branch} {d['Modelo']}",
-                    f"{indent}├── Interface    : {d['Interface']}",
-                    f"{indent}├── Tamanho (GB) : {d['Tamanho (GB)']}",
-                    f"{indent}└── Serial       : {d['Serial']}",
-                ])
-            self.log_tree("DISCOS", disk_lines)
-
-        finally:
-            self.system_report_running = False
-            pythoncom.CoUninitialize()  # Finaliza COM ao sair da thread
-
+    # ============================================================
+    # HELPERS DE LOG
+    # ============================================================
+    def log_title(self, title):
         self.log("")
         self.log("=" * 60)
+        self.log(f"   {title}".center(60))
+        self.log("=" * 60)
 
+    def log_tree(self, title, lines):
+        self.log("")
+        self.log(f"[{title}]")
+        for line in lines:
+            self.log(line)
 
-    # ============================================
-    # MAPEAMENTO DOS BOTÕES
-    # ============================================
-    def execute_button(self, index):
-        action = ACTIONS.get(index)
-        if not action:
-            return
+    def log_info(self, msg):
+        self.log(f"[INFO] {msg}")
 
-        handler_name = action["handler"]
-        handler = getattr(self, handler_name, None)
+    def log_warn(self, msg):
+        self.log(f"[ATENCAO] {msg}")
 
-        if not handler:
-            self.log(f"Ação '{handler_name}' não implementada.")
-            return
+    def log_error(self, msg):
+        self.log(f"[ERRO] {msg}")
 
-        threading.Thread(target=handler).start()
+    def log_block_raw(self, text):
+        for line in text.splitlines():
+            self.log(line)
 
+    # ============================================================
+    # PROGRESS: notifica a GUI de forma thread-safe via root.after
+    # ============================================================
+    def _progress_start(self, label="Executando..."):
+        with self._running_lock:
+            self._running_count += 1
+        if self.gui:
+            self.gui.root.after(0, lambda: self.gui.progress_start(label))
 
-    # ============================================
-    # EXECUTAR COMANDO DIGITADO (TERMINAL)
-    # ============================================
-    def _run_command(self, command):
+    def _progress_stop(self):
+        with self._running_lock:
+            self._running_count -= 1
+            active = self._running_count > 0
+        if self.gui:
+            if not active:
+                self.gui.root.after(0, self.gui.progress_stop)
+
+    # ============================================================
+    # EXECUCAO DE COMANDO SHELL
+    # ============================================================
+    def _decode(self, raw):
+        for enc in ("cp850", "utf-8", "latin-1"):
+            try:
+                return raw.decode(enc, errors="replace")
+            except Exception:
+                pass
+        return raw.decode("latin-1", errors="replace")
+
+    def run_command(self, desc, cmd):
+        """Executa um comando shell e transmite cada linha para o log."""
+        self.log_title(desc)
+        self._progress_start(desc)
+        try:
+            with subprocess.Popen(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT
+            ) as proc:
+                for raw in proc.stdout:
+                    line = self._decode(raw).replace("\r\n", "\n")
+                    self.log(line.rstrip("\n"))
+        except Exception as e:
+            self.log_error(str(e))
+        finally:
+            self._progress_stop()
+            self.log("")
+            self.log_info("Finalizado.")
+            self.log("")
+
+    # ============================================================
+    # EXECUCAO A PARTIR DO TERMINAL DA GUI
+    # ============================================================
+    def run_custom_command(self, command):
         self.log(f"> {command}")
-
+        self._progress_start(command)
         try:
             proc = subprocess.Popen(
                 command,
@@ -328,32 +138,69 @@ class App:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT
             )
-
             for raw in proc.stdout:
                 line = self._decode(raw).rstrip("\r\n")
                 if line:
                     self.log(line)
-
             proc.wait()
-
         except Exception as e:
-            self.log(f"ERRO: {e}")
+            self.log_error(str(e))
+        finally:
+            self._progress_stop()
 
+    # ============================================================
+    # MAPEAMENTO DOS BOTOES / ACOES
+    # ============================================================
+    def execute_button(self, index):
+        action = ACTIONS.get(index)
+        if not action:
+            return
 
+        handler_name = action["handler"]
 
-    # ============================================
-    # COMANDO DIGITADO PELO TERMINAL DA GUI
-    # ============================================
-    def run_custom_command(self, command):
-        self._run_command(command)
+        # Verifica se existe metodo Python na classe
+        handler = getattr(self, handler_name, None)
+        if handler:
+            threading.Thread(target=handler, daemon=True).start()
+            return
 
-    # ============================================
-    # Obtem informações de uma pasta especifica.
-    # ============================================
+        # Verifica se existe comando shell direto no COMMANDS
+        cmd = COMMANDS.get(handler_name)
+        if cmd:
+            label = action["label"]
+            threading.Thread(
+                target=self.run_command,
+                args=(label, cmd),
+                daemon=True
+            ).start()
+            return
+
+        self.log_error(f"Acao '{handler_name}' nao implementada.")
+
+    def execute_sequence(self, indices):
+        """Executa uma lista de indices de acoes em sequencia, em thread unica."""
+        def _run():
+            for idx in indices:
+                action = ACTIONS.get(idx)
+                if not action:
+                    continue
+                handler_name = action["handler"]
+                handler = getattr(self, handler_name, None)
+                if handler:
+                    handler()
+                else:
+                    cmd = COMMANDS.get(handler_name)
+                    if cmd:
+                        self.run_command(action["label"], cmd)
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ============================================================
+    # UTILITARIOS
+    # ============================================================
     def get_folder_info(self, folder_path):
+        """Retorna (tamanho em GB, quantidade de arquivos) de uma pasta."""
         total_size = 0
         total_files = 0
-
         for root, dirs, files in os.walk(folder_path):
             total_files += len(files)
             for f in files:
@@ -362,6 +209,4 @@ class App:
                     total_size += os.path.getsize(fp)
                 except (OSError, PermissionError):
                     pass
-
-        size_gb = total_size / (1024 ** 3)
-        return round(size_gb, 2), total_files
+        return round(total_size / (1024 ** 3), 2), total_files
