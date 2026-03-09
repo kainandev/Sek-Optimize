@@ -383,3 +383,30 @@ AUTOCOMPLETE_COMMANDS = [
 
 # Arquivo de persistencia dos grupos de macro
 GROUPS_FILE = "groups.json"
+
+# ============================================================
+# GRUPOS PADRAO (embutidos no codigo, nao dependem de JSON)
+# Para adicionar um novo grupo padrao basta inserir uma entrada aqui.
+# ============================================================
+DEFAULT_GROUPS = {
+    "Otimizacao Rapida": {
+        "builtin": True,
+        "actions": [0, 1, 2, 3],
+    },
+    "Limpeza Completa": {
+        "builtin": True,
+        "actions": [5, 6, 7],
+    },
+    "Manutencao Basica": {
+        "builtin": True,
+        "actions": [15, 16, 11],
+    },
+    "Diagnostico de Rede": {
+        "builtin": True,
+        "actions": [18, 20, 21, 22],
+    },
+    "Otimizacao Completa": {
+        "builtin": True,
+        "actions": [0, 1, 2, 3, 4, 5, 6, 11],
+    },
+}
