@@ -10,20 +10,18 @@ class App:
         self.start_time = datetime.now()
         self.log_file = self._gerar_log_file()
 
-        # Fila thread-safe: o log nunca chama widgets diretamente
+        # Fila thread-safe: threads escrevem aqui, GUI le via polling
         self.log_queue = queue.Queue()
 
-        # Sinaliza quantas operacoes estao rodando (para a barra de progresso)
         self._running_count = 0
         self._running_lock = threading.Lock()
-        # show_fetch e chamado externamente apos set_gui()
+        # show_fetch e chamado por main.py apos set_gui()
 
     def set_gui(self, gui):
         self.gui = gui
 
     # ============================================================
     # LOG CENTRAL
-    # Escreve na fila e no arquivo. A GUI consome a fila via polling.
     # ============================================================
     def _gerar_log_file(self):
         hostname = socket.gethostname()
@@ -37,19 +35,15 @@ class App:
         timestamp = datetime.now().strftime("[%d/%m/%Y %H:%M:%S] ")
         texto = timestamp + str(msg)
 
-        # Enfileira para a GUI consumir na thread principal
+        # Enfileira para a GUI consumir na thread principal (nunca acessa gui diretamente)
         self.log_queue.put(texto)
 
-        # Salva no arquivo diretamente (thread-safe pois e IO sequencial)
         try:
             with open(self.log_file, "a", encoding="utf-8", errors="replace") as f:
                 f.write(texto + "\n")
         except OSError:
             pass
 
-    # ============================================================
-    # HELPERS DE LOG
-    # ============================================================
     def log_title(self, title):
         self.log("")
         self.log("=" * 60)
@@ -76,7 +70,7 @@ class App:
             self.log(line)
 
     # ============================================================
-    # PROGRESS: notifica a GUI de forma thread-safe via root.after
+    # PROGRESS
     # ============================================================
     def _progress_start(self, label="Executando..."):
         with self._running_lock:
@@ -88,12 +82,11 @@ class App:
         with self._running_lock:
             self._running_count -= 1
             active = self._running_count > 0
-        if self.gui:
-            if not active:
-                self.gui.root.after(0, self.gui.progress_stop)
+        if self.gui and not active:
+            self.gui.root.after(0, self.gui.progress_stop)
 
     # ============================================================
-    # EXECUCAO DE COMANDO SHELL
+    # EXECUCAO DE COMANDOS SHELL
     # ============================================================
     def _decode(self, raw):
         for enc in ("cp850", "utf-8", "latin-1"):
@@ -104,7 +97,6 @@ class App:
         return raw.decode("latin-1", errors="replace")
 
     def run_command(self, desc, cmd):
-        """Executa um comando shell e transmite cada linha para o log."""
         self.log_title(desc)
         self._progress_start(desc)
         try:
@@ -125,9 +117,6 @@ class App:
             self.log_info("Finalizado.")
             self.log("")
 
-    # ============================================================
-    # EXECUCAO A PARTIR DO TERMINAL DA GUI
-    # ============================================================
     def run_custom_command(self, command):
         self.log(f"> {command}")
         self._progress_start(command)
@@ -149,36 +138,28 @@ class App:
             self._progress_stop()
 
     # ============================================================
-    # MAPEAMENTO DOS BOTOES / ACOES
+    # MAPEAMENTO DE ACOES
     # ============================================================
     def execute_button(self, index):
         action = ACTIONS.get(index)
         if not action:
             return
-
         handler_name = action["handler"]
-
-        # Verifica se existe metodo Python na classe
         handler = getattr(self, handler_name, None)
         if handler:
             threading.Thread(target=handler, daemon=True).start()
             return
-
-        # Verifica se existe comando shell direto no COMMANDS
         cmd = COMMANDS.get(handler_name)
         if cmd:
-            label = action["label"]
             threading.Thread(
                 target=self.run_command,
-                args=(label, cmd),
+                args=(action["label"], cmd),
                 daemon=True
             ).start()
             return
-
         self.log_error(f"Acao '{handler_name}' nao implementada.")
 
     def execute_sequence(self, indices):
-        """Executa uma lista de indices de acoes em sequencia, em thread unica."""
         def _run():
             for idx in indices:
                 action = ACTIONS.get(idx)
@@ -198,7 +179,6 @@ class App:
     # UTILITARIOS
     # ============================================================
     def get_folder_info(self, folder_path):
-        """Retorna (tamanho em GB, quantidade de arquivos) de uma pasta."""
         total_size = 0
         total_files = 0
         for root, dirs, files in os.walk(folder_path):
