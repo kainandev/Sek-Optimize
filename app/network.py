@@ -3,6 +3,8 @@ from app.app import App
 
 
 class Network(App):
+    """Ferramentas de rede e diagnostico de conectividade."""
+
     def __init__(self):
         super().__init__()
 
@@ -26,6 +28,19 @@ class Network(App):
 
     def run_nslookup(self):
         self.run_command("NSLookup Google", COMMANDS["run_nslookup"])
+
+    def show_active_connections(self):
+        self.run_command("Conexoes ativas (ESTABLISHED)", COMMANDS["show_active_connections"])
+
+    def renew_ip(self):
+        self.log_warn("A conexao de rede sera interrompida brevemente.")
+        self.run_command("Renovando IP (release + renew)", COMMANDS["renew_ip"])
+
+    def show_open_ports(self):
+        self.run_command("Portas em escuta (LISTENING)", COMMANDS["show_open_ports"])
+
+    def list_services_running(self):
+        self.run_command("Servicos em execucao", COMMANDS["list_services_running"])
 
     def run_netstat(self):
         self.run_command("Netstat", "netstat -ano")

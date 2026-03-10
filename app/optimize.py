@@ -3,8 +3,13 @@ from app.app import App
 
 
 class Optmize(App):
+    """Otimizacoes de desempenho e configuracoes do sistema."""
+
     def __init__(self):
         super().__init__()
+
+    # Cada metodo delega para run_command com a chave de COMMANDS.
+    # Para alterar o comando, edite apenas o dict COMMANDS em config.py.
 
     def disable_transparency(self):
         self.run_command("Desativando transparencias", COMMANDS["disable_transparency"])
@@ -31,7 +36,7 @@ class Optmize(App):
         self.run_command("Encerrando tarefas em segundo plano", COMMANDS["kill_background_tasks"])
 
     def check_disk_health(self):
-        self.run_command("Verificando saude do disco (SMART)", COMMANDS["check_disk_health"])
+        self.run_command("Saude do disco (SMART)", COMMANDS["check_disk_health"])
 
     def disk_info(self):
         self.run_command("Informacoes do disco", COMMANDS["disk_info"])
@@ -42,74 +47,57 @@ class Optmize(App):
     def restart_print_spooler(self):
         self.run_command("Reiniciando spooler de impressao", COMMANDS["restart_print_spooler"])
 
-    def run_sfc(self):
-        self.run_command("Executando SFC", COMMANDS["run_sfc"])
+    def disable_hibernation(self):
+        self.run_command("Desativando hibernacao", COMMANDS["disable_hibernation"])
 
-    def run_dism(self):
-        self.run_command("Executando DISM", COMMANDS["run_dism"])
+    def disable_search_indexing(self):
+        self.run_command("Desativando indexacao de busca", COMMANDS["disable_search_indexing"])
 
-    def run_chkdsk(self):
-        self.run_command("Agendando verificacao de disco (CHKDSK)", COMMANDS["run_chkdsk"])
+    def list_installed_programs(self):
+        self.log_warn("Este comando pode demorar alguns segundos.")
+        self.run_command("Programas instalados", COMMANDS["list_installed_programs"])
 
-    def disk_usage_report(self):
-        """Relatorio de uso do disco C: via Python puro."""
-        usage = psutil.disk_usage("C:/")
-        total   = round(usage.total / (1024 ** 3), 1)
-        used    = round(usage.used  / (1024 ** 3), 1)
-        free    = round(usage.free  / (1024 ** 3), 1)
-        percent = usage.percent
+    def check_drivers(self):
+        self.run_command("Drivers instalados", COMMANDS["check_drivers"])
 
-        self.log("")
-        self.log("=" * 44)
-        self.log("USO DO DISCO (C:)".center(44))
-        self.log("=" * 44)
-        self.log(f"Tamanho total : {total} GB")
-        self.log(f"Em uso        : {used} GB")
-        self.log(f"Livre         : {free} GB")
-        self.log(f"Ocupacao      : {percent}%")
-        self.log("=" * 44)
+    def check_updates_hotfix(self):
+        self.run_command("Atualizacoes recentes (HotFix)", COMMANDS["check_updates_hotfix"])
 
-    # ============================================================
-    # OTIMIZACAO COMPLETA
-    # Roda em sequencia todas as otimizacoes seguras
-    # ============================================================
-    def optimize_all(self):
-        self.log_info("Iniciando otimizacao completa...")
-        self.disable_transparency()
-        self.disable_gamemode()
-        self.power_plan()
-        self.visual_effects()
-        self.disable_services()
-        self.clean_temp()
-        self.flush_dns()
-        self.log_info("Otimizacao completa finalizada!")
+    # Privatidade
+    def disable_telemetry(self):
+        self.run_command("Desativando telemetria", COMMANDS["disable_telemetry"])
 
-    # ============================================================
-    # MAS - executa em janela externa separada
-    # ============================================================
-    def run_massgrave(self):
-        self.log("Abrindo Microsoft Activation Scripts (MAS)...")
-        cmd = (
-            r'start "" cmd.exe /c powershell -NoLogo -NoProfile -Command '
-            r'"iwr -useb https://get.activated.win | iex"'
-        )
-        subprocess.Popen(cmd, shell=True)
+    def disable_cortana(self):
+        self.run_command("Desativando Cortana", COMMANDS["disable_cortana"])
 
-    # ============================================================
-    # RELATORIO DO SISTEMA via WMI (Python puro)
-    # ============================================================
+    def disable_xbox_dvr(self):
+        self.run_command("Desativando Xbox Game DVR", COMMANDS["disable_xbox_dvr"])
+
+    def disable_remote_desktop(self):
+        self.run_command("Desativando Remote Desktop", COMMANDS["disable_remote_desktop"])
+
+    def list_startup_programs(self):
+        self.run_command("Programas na inicializacao", COMMANDS["list_startup_programs"])
+
+    def export_users(self):
+        self.run_command("Usuarios do sistema", COMMANDS["export_users"])
+
+    def defender_quick_scan(self):
+        self.run_command("Windows Defender - Scan Rapido", COMMANDS["defender_quick_scan"])
+
+    # Relatorio completo do sistema via WMI
     def run_system_report(self):
         if pythoncom is None:
             self.log_error("pythoncom nao disponivel. Instale pywin32.")
             return
         pythoncom.CoInitialize()
+        self._progress_start("Gerando relatorio...")
         try:
             self.log("")
-            self.log("=" * 60)
-            self.log("RELATORIO DO SISTEMA".center(60))
-            self.log("=" * 60)
+            self.log("=" * 62)
+            self.log("RELATORIO DO SISTEMA".center(62))
+            self.log("=" * 62)
 
-            # --- Memoria ---
             slots, max_ram = get_ram_capability()
             modules = get_ram_modules()
             mem_lines = [
@@ -132,7 +120,6 @@ class Optmize(App):
                 ]
             self.log_tree("MEMORIA", mem_lines)
 
-            # --- CPU ---
             cpu = get_cpu_info()
             self.log_tree("CPU", [
                 f"|- Modelo          : {cpu['Modelo']}",
@@ -142,7 +129,6 @@ class Optmize(App):
                 f"+- Nucleos         : {cpu['Nucleos']}",
             ])
 
-            # --- GPU ---
             gpus = get_gpu_info()
             gpu_lines = []
             for i, g in enumerate(gpus):
@@ -156,7 +142,6 @@ class Optmize(App):
                 ]
             self.log_tree("GPU", gpu_lines)
 
-            # --- Discos ---
             disks = get_disks()
             disk_lines = []
             for i, d in enumerate(disks):
@@ -172,7 +157,51 @@ class Optmize(App):
             self.log_tree("DISCOS", disk_lines)
 
         finally:
+            self._progress_stop()
             pythoncom.CoUninitialize()
+            self.log("")
+            self.log("=" * 62)
 
+    # ============================================================
+    # RELATORIO DE USO DE DISCO (Python puro, sem shell)
+    # ============================================================
+    def disk_usage_report(self):
+        usage   = psutil.disk_usage("C:/")
+        total   = round(usage.total / (1024 ** 3), 1)
+        used    = round(usage.used  / (1024 ** 3), 1)
+        free    = round(usage.free  / (1024 ** 3), 1)
+        percent = usage.percent
+
+        self.log_title("Uso do Disco C:")
+        self.log(f"  Tamanho total : {total} GB")
+        self.log(f"  Em uso        : {used} GB")
+        self.log(f"  Livre         : {free} GB")
+        self.log(f"  Ocupacao      : {percent}%")
+        self.log_sep()
+        self.log_ok("Concluido.")
         self.log("")
-        self.log("=" * 60)
+
+    # ============================================================
+    # OTIMIZACAO COMPLETA
+    # ============================================================
+    def optimize_all(self):
+        self.log_info("Iniciando otimizacao completa...")
+        self.disable_transparency()
+        self.disable_gamemode()
+        self.power_plan()
+        self.visual_effects()
+        self.disable_services()
+        self.clean_temp()
+        self.flush_dns()
+        self.log_ok("Otimizacao completa finalizada!")
+
+    # ============================================================
+    # MAS - executa em janela externa separada
+    # ============================================================
+    def run_massgrave(self):
+        self.log_info("Abrindo Microsoft Activation Scripts (MAS)...")
+        cmd = (
+            r'start "" cmd.exe /c powershell -NoLogo -NoProfile -Command '
+            r'"iwr -useb https://get.activated.win | iex"'
+        )
+        subprocess.Popen(cmd, shell=True)
