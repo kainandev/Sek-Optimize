@@ -23,7 +23,7 @@ from collections import defaultdict
 
 from util.system_details import *
 
-VERSION_SOFTWARE = "0.2.0"
+VERSION_SOFTWARE = "0.2.1"
 
 APP_ASCII = [
 "           .:===++++++===:.           ",

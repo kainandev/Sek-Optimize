@@ -147,6 +147,15 @@ class GUI:
         style.configure("App.Horizontal.TProgressbar",
             troughcolor=C_CARD2, background=C_ACCENT, borderwidth=0)
 
+        # Estilo do Combobox usado na aba de relatorios
+        style.configure("App.TCombobox",
+            fieldbackground=C_CARD, background=C_CARD2,
+            foreground=C_TEXT, selectbackground=C_ACCENT,
+            selectforeground="white", borderwidth=0)
+        style.map("App.TCombobox",
+            fieldbackground=[("readonly", C_CARD)],
+            foreground=[("readonly", C_TEXT)])
+
     # ============================================================
     # HEADER
     # ============================================================
@@ -184,14 +193,17 @@ class GUI:
         nb = ttk.Notebook(left, style="App.TNotebook")
         nb.pack(fill=tk.BOTH, expand=True)
 
-        tab_acoes  = tk.Frame(nb, bg=C_BG)
-        tab_grupos = tk.Frame(nb, bg=C_BG)
+        tab_acoes      = tk.Frame(nb, bg=C_BG)
+        tab_grupos     = tk.Frame(nb, bg=C_BG)
+        tab_relatorios = tk.Frame(nb, bg=C_BG)
 
-        nb.add(tab_acoes,  text="  Acoes  ")
-        nb.add(tab_grupos, text="  Grupos  ")
+        nb.add(tab_acoes,      text="  Acoes  ")
+        nb.add(tab_grupos,     text="  Grupos  ")
+        nb.add(tab_relatorios, text="  Relatorios  ")
 
         self._build_tab_acoes(tab_acoes)
         self._build_tab_grupos(tab_grupos)
+        self._build_tab_relatorios(tab_relatorios)
 
         nb.bind("<<NotebookTabChanged>>", lambda e: (
             self._refresh_groups_list()
@@ -288,7 +300,7 @@ class GUI:
                 lbl.bind("<Button-1>", lambda e, v=var: v.set(not v.get()))
 
                 # Hover: muda fundo e mostra descricao
-                desc = action.get("description", "")
+                desc   = action.get("description", "")
                 danger = action.get("danger", False)
 
                 def _enter(e, r=row, c=chk, d=desc, dng=danger):
@@ -428,7 +440,7 @@ class GUI:
 
     def _populate_group_editor(self, preset_indices=None, readonly=False):
         preset = set(preset_indices or [])
-        inner = self._scroll_grupos.inner
+        inner  = self._scroll_grupos.inner
         for w in inner.winfo_children():
             w.destroy()
         self.group_check_vars.clear()
@@ -453,9 +465,9 @@ class GUI:
 
             for idx in indices:
                 action = ACTIONS[idx]
-                var = tk.BooleanVar(value=(idx in preset))
+                var    = tk.BooleanVar(value=(idx in preset))
                 self.group_check_vars[idx] = var
-                color = C_WARNING if action["danger"] else C_TEXT
+                color  = C_WARNING if action["danger"] else C_TEXT
 
                 row = tk.Frame(inner, bg=C_CARD)
                 row.pack(fill=tk.X)
@@ -491,7 +503,7 @@ class GUI:
         sel = self.groups_listbox.curselection()
         if not sel:
             return
-        name = self.groups_listbox.get(sel[0])
+        name  = self.groups_listbox.get(sel[0])
         all_g = self._all_groups()
         group = all_g.get(name, {})
         is_builtin = group.get("builtin", False)
@@ -658,6 +670,241 @@ class GUI:
                 json.dump(self._custom_groups, f, ensure_ascii=False, indent=2)
         except Exception:
             pass
+
+    # ============================================================
+    # ABA: RELATORIOS
+    # Duas secoes: exportar para arquivo e enviar para API.
+    # Os botoes de acao so ficam ativos quando os campos obrigatorios
+    # estao preenchidos, com feedback visual imediato via trace.
+    # ============================================================
+    def _build_tab_relatorios(self, parent):
+        container = tk.Frame(parent, bg=C_BG)
+        container.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+
+        # --------------------------------------------------------
+        # SECAO 1: Exportar para Arquivo
+        # --------------------------------------------------------
+        sec1_hdr = tk.Frame(container, bg=C_CARD2)
+        sec1_hdr.pack(fill=tk.X)
+
+        tk.Label(
+            sec1_hdr, text="  Exportar para Arquivo",
+            bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
+            anchor="w", pady=8,
+        ).pack(fill=tk.X)
+
+        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X)
+
+        sec1_body = tk.Frame(container, bg=C_BG)
+        sec1_body.pack(fill=tk.X, padx=12, pady=10)
+
+        # Selecao de formato via radio button
+        tk.Label(
+            sec1_body, text="Formato:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._report_fmt = tk.StringVar(value="json")
+        radio_row = tk.Frame(sec1_body, bg=C_BG)
+        radio_row.pack(fill=tk.X, pady=(3, 10))
+
+        for fmt_opt in ("json", "csv", "html"):
+            tk.Radiobutton(
+                radio_row,
+                text=fmt_opt.upper(),
+                variable=self._report_fmt,
+                value=fmt_opt,
+                bg=C_BG, fg=C_TEXT,
+                selectcolor=C_CARD2,
+                activebackground=C_BG,
+                activeforeground=C_TEXT,
+                highlightthickness=0,
+                font=FONT_SMALL,
+            ).pack(side=tk.LEFT, padx=(0, 14))
+
+        # Caminho de destino do arquivo
+        tk.Label(
+            sec1_body, text="Destino:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._report_path_var = tk.StringVar()
+        path_row = tk.Frame(sec1_body, bg=C_BG)
+        path_row.pack(fill=tk.X, pady=(3, 10))
+
+        tk.Entry(
+            path_row,
+            textvariable=self._report_path_var,
+            bg=C_CARD, fg=C_TEXT,
+            insertbackground=C_TEXT,
+            relief="flat", font=FONT_MONO,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+
+        self._make_flat_btn(
+            path_row, "Buscar", self._browse_report_path,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        # Botao de exportacao; inicia desabilitado
+        export_row = tk.Frame(sec1_body, bg=C_BG)
+        export_row.pack(fill=tk.X)
+
+        self._btn_export = tk.Label(
+            export_row,
+            text="Exportar",
+            bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4,
+            cursor="arrow", relief="flat",
+        )
+        self._btn_export.pack(side=tk.RIGHT)
+        self._btn_export.bind("<Button-1>", lambda e: self._do_export())
+
+        # --------------------------------------------------------
+        # SECAO 2: Enviar para API
+        # --------------------------------------------------------
+        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X, pady=(10, 0))
+
+        sec2_hdr = tk.Frame(container, bg=C_CARD2)
+        sec2_hdr.pack(fill=tk.X)
+
+        tk.Label(
+            sec2_hdr, text="  Enviar para API",
+            bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
+            anchor="w", pady=8,
+        ).pack(fill=tk.X)
+
+        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X)
+
+        sec2_body = tk.Frame(container, bg=C_BG)
+        sec2_body.pack(fill=tk.X, padx=12, pady=10)
+
+        # Dropdown de metodo HTTP
+        tk.Label(
+            sec2_body, text="Metodo HTTP:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._api_method_var = tk.StringVar(value="POST")
+        method_cb = ttk.Combobox(
+            sec2_body,
+            textvariable=self._api_method_var,
+            values=["POST", "PUT", "PATCH"],
+            state="readonly",
+            style="App.TCombobox",
+            font=FONT_SMALL,
+            width=10,
+        )
+        method_cb.pack(anchor="w", pady=(3, 10))
+
+        # URL da API
+        tk.Label(
+            sec2_body, text="URL:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._api_url_var = tk.StringVar()
+        tk.Entry(
+            sec2_body,
+            textvariable=self._api_url_var,
+            bg=C_CARD, fg=C_TEXT,
+            insertbackground=C_TEXT,
+            relief="flat", font=FONT_MONO,
+        ).pack(fill=tk.X, pady=(3, 10), ipady=4)
+
+        # Chave de acesso (mascarada)
+        tk.Label(
+            sec2_body, text="Chave de Acesso:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._api_key_var = tk.StringVar()
+        tk.Entry(
+            sec2_body,
+            textvariable=self._api_key_var,
+            bg=C_CARD, fg=C_TEXT,
+            insertbackground=C_TEXT,
+            relief="flat", font=FONT_MONO,
+            show="*",
+        ).pack(fill=tk.X, pady=(3, 10), ipady=4)
+
+        # Botao de envio; inicia desabilitado
+        send_row = tk.Frame(sec2_body, bg=C_BG)
+        send_row.pack(fill=tk.X)
+
+        self._btn_send = tk.Label(
+            send_row,
+            text="Enviar",
+            bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4,
+            cursor="arrow", relief="flat",
+        )
+        self._btn_send.pack(side=tk.RIGHT)
+        self._btn_send.bind("<Button-1>", lambda e: self._do_send_api())
+
+        # Traces para reatividade dos botoes
+        self._report_path_var.trace("w", self._update_export_btn)
+        self._api_url_var.trace("w",    self._update_send_btn)
+        self._api_key_var.trace("w",    self._update_send_btn)
+
+    # ============================================================
+    # CALLBACKS DA ABA RELATORIOS
+    # ============================================================
+    def _browse_report_path(self):
+        fmt     = self._report_fmt.get()
+        ext_map = {"json": ".json", "csv": ".csv", "html": ".html"}
+        ext     = ext_map.get(fmt, ".json")
+        path    = filedialog.asksaveasfilename(
+            defaultextension=ext,
+            filetypes=[(fmt.upper(), f"*{ext}"), ("Todos", "*.*")],
+            title="Salvar relatorio",
+            initialfile=f"relatorio_sek{ext}",
+        )
+        if path:
+            self._report_path_var.set(path)
+
+    def _set_btn_active(self, btn):
+        """Ativa visualmente o botao e configura hover."""
+        btn.config(bg=C_ACCENT, fg="white", cursor="hand2")
+        btn.bind("<Enter>", lambda e: btn.config(bg=C_ACCENT2))
+        btn.bind("<Leave>", lambda e: btn.config(bg=C_ACCENT))
+
+    def _set_btn_inactive(self, btn):
+        """Desativa visualmente o botao e remove hover."""
+        btn.config(bg=C_CARD2, fg=C_DIM, cursor="arrow")
+        btn.bind("<Enter>", lambda e: None)
+        btn.bind("<Leave>", lambda e: None)
+
+    def _update_export_btn(self, *_):
+        """Ativa o botao Exportar apenas quando o caminho de destino esta preenchido."""
+        if self._report_path_var.get().strip():
+            self._set_btn_active(self._btn_export)
+        else:
+            self._set_btn_inactive(self._btn_export)
+
+    def _update_send_btn(self, *_):
+        """Ativa o botao Enviar apenas quando URL e chave estao preenchidos."""
+        url_ok = bool(self._api_url_var.get().strip())
+        key_ok = bool(self._api_key_var.get().strip())
+        if url_ok and key_ok:
+            self._set_btn_active(self._btn_send)
+        else:
+            self._set_btn_inactive(self._btn_send)
+
+    def _do_export(self):
+        """Aciona a exportacao do relatorio se o botao estiver ativo."""
+        path = self._report_path_var.get().strip()
+        fmt  = self._report_fmt.get()
+        if not path:
+            return
+        self.app.export_report(fmt, path)
+
+    def _do_send_api(self):
+        """Aciona o envio para a API se URL e chave estiverem preenchidos."""
+        url = self._api_url_var.get().strip()
+        key = self._api_key_var.get().strip()
+        if not url or not key:
+            return
+        method = self._api_method_var.get()
+        self.app.send_report_api(url, key, method)
 
     # ============================================================
     # PAINEL DE LOG
