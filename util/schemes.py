@@ -6,6 +6,8 @@ import sys
 import platform
 import socket
 import getpass
+import subprocess
+import winreg
 from datetime import datetime
 
 try:
@@ -29,7 +31,7 @@ except ImportError:
 
 
 # Version bumped when new top-level keys are added to the schema.
-SCHEMA_VERSION = "0.2"
+SCHEMA_VERSION = "0.3"
 
 # Readable labels for WMI memory type codes (Win32_PhysicalMemory.MemoryType)
 _RAM_TYPE = {
@@ -51,6 +53,72 @@ _RAM_FORM = {
     20: "PLCC", 21: "BGA", 22: "FPBGA", 23: "LGA",
 }
 
+# Registry hives searched for installed programs
+_UNINSTALL_KEYS = [
+    (winreg.HKEY_LOCAL_MACHINE,
+     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    (winreg.HKEY_LOCAL_MACHINE,
+     r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    (winreg.HKEY_CURRENT_USER,
+     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+]
+
+# Registry hives searched for startup entries
+_STARTUP_KEYS = [
+    (winreg.HKEY_CURRENT_USER,
+     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+    (winreg.HKEY_LOCAL_MACHINE,
+     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run"),
+    (winreg.HKEY_LOCAL_MACHINE,
+     r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Run"),
+]
+
+# Known antivirus product display-name substrings (case-insensitive)
+_AV_KEYWORDS = [
+    "antivirus", "anti-virus", "defender", "kaspersky", "avast", "avg",
+    "bitdefender", "norton", "mcafee", "eset", "malwarebytes", "trend micro",
+    "sophos", "webroot", "comodo", "f-secure", "g data", "bullguard",
+    "avira", "panda", "vipre", "cylance", "crowdstrike", "sentinelone",
+    "carbon black", "symantec", "security essentials",
+]
+
+# Known email client display-name substrings and their profile registry paths
+_EMAIL_CLIENTS = {
+    "Microsoft Outlook": {
+        "keywords": ["outlook"],
+        "profile_roots": [
+            r"SOFTWARE\Microsoft\Office\16.0\Outlook\Profiles",
+            r"SOFTWARE\Microsoft\Office\15.0\Outlook\Profiles",
+            r"SOFTWARE\Microsoft\Office\14.0\Outlook\Profiles",
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows Messaging Subsystem\Profiles",
+        ],
+    },
+    "Mozilla Thunderbird": {
+        "keywords": ["thunderbird"],
+        "profile_roots": [],  # profiles.ini parsed from filesystem
+    },
+    "eM Client": {
+        "keywords": ["em client"],
+        "profile_roots": [],
+    },
+    "The Bat!": {
+        "keywords": ["the bat"],
+        "profile_roots": [],
+    },
+    "Mailbird": {
+        "keywords": ["mailbird"],
+        "profile_roots": [],
+    },
+    "Spike": {
+        "keywords": ["spike"],
+        "profile_roots": [],
+    },
+    "Windows Mail": {
+        "keywords": ["windows mail", "microsoft mail"],
+        "profile_roots": [],
+    },
+}
+
 
 class SchemeBuilder:
     """
@@ -65,23 +133,31 @@ class SchemeBuilder:
     def collect(self):
         """
         Returns a fully structured dictionary with machine inventory.
-        Sections: system, bios, motherboard, cpu, memory, storage,
-                  gpu, network, audio, software, runtime.
+        Sections: system, bios, motherboard, cpu, memory, storage, gpu,
+                  network, open_ports, audio, software, installed_programs,
+                  startup_programs, local_users, antivirus, email_clients,
+                  runtime.
         """
         return {
-            "schema_version": SCHEMA_VERSION,
-            "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "system":         self._collect_system(),
-            "bios":           self._collect_bios(),
-            "motherboard":    self._collect_motherboard(),
-            "cpu":            self._collect_cpu(),
-            "memory":         self._collect_memory(),
-            "storage":        self._collect_storage(),
-            "gpu":            self._collect_gpu(),
-            "network":        self._collect_network(),
-            "audio":          self._collect_audio(),
-            "software":       self._collect_software(),
-            "runtime":        self._collect_runtime(),
+            "schema_version":     SCHEMA_VERSION,
+            "generated_at":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "system":             self._collect_system(),
+            "bios":               self._collect_bios(),
+            "motherboard":        self._collect_motherboard(),
+            "cpu":                self._collect_cpu(),
+            "memory":             self._collect_memory(),
+            "storage":            self._collect_storage(),
+            "gpu":                self._collect_gpu(),
+            "network":            self._collect_network(),
+            "open_ports":         self._collect_open_ports(),
+            "audio":              self._collect_audio(),
+            "software":           self._collect_software(),
+            "installed_programs": self._collect_installed_programs(),
+            "startup_programs":   self._collect_startup_programs(),
+            "local_users":        self._collect_local_users(),
+            "antivirus":          self._collect_antivirus(),
+            "email_clients":      self._collect_email_clients(),
+            "runtime":            self._collect_runtime(),
         }
 
     # ============================================================
@@ -106,7 +182,7 @@ class SchemeBuilder:
             d["uptime"]    = f"{h:02d}h {m:02d}m {s:02d}s"
             d["processes"] = len(psutil.pids())
 
-        # OS install date, serial and build number via WMI
+        # OS install date, serial, build, edition, and license type via WMI
         if _HAS_WMI:
             try:
                 pythoncom.CoInitialize()
@@ -114,10 +190,13 @@ class SchemeBuilder:
                 for os_obj in c.Win32_OperatingSystem():
                     raw = str(os_obj.InstallDate or "")
                     if len(raw) >= 8:
-                        d["os_install_date"]  = f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
-                    d["os_serial"]            = str(os_obj.SerialNumber    or "N/A")
-                    d["os_build"]             = str(os_obj.BuildNumber     or "N/A")
-                    d["os_registered_to"]     = str(os_obj.RegisteredUser  or "N/A")
+                        d["os_install_date"] = f"{raw[0:4]}-{raw[4:6]}-{raw[6:8]}"
+                    d["os_serial"]           = str(os_obj.SerialNumber   or "N/A")
+                    d["os_build"]            = str(os_obj.BuildNumber    or "N/A")
+                    d["os_registered_to"]    = str(os_obj.RegisteredUser or "N/A")
+                    caption = str(os_obj.Caption or "")
+                    d["os_edition"]          = caption
+                    d["os_license_type"]     = self._parse_license_type(caption)
                     break
             except Exception:
                 pass
@@ -128,6 +207,24 @@ class SchemeBuilder:
                     pass
 
         return d
+
+    def _parse_license_type(self, caption):
+        """
+        Extracts the edition/license type from the OS caption string.
+        Ordered by specificity so longer tokens are matched first.
+        Returns 'Unknown' if no known edition keyword is found.
+        """
+        known_editions = [
+            "Enterprise LTSC", "Enterprise N", "Enterprise",
+            "Education N", "Education",
+            "Pro for Workstations", "Pro N", "Pro",
+            "Home Single Language", "Home N", "Home",
+            "S Mode", "SE", "IoT",
+        ]
+        for edition in known_editions:
+            if edition.lower() in caption.lower():
+                return edition
+        return "Unknown"
 
     def _get_boot_mode(self):
         # Presence of SecureBoot.exe or the EFI subdirectory confirms UEFI
@@ -229,13 +326,13 @@ class SchemeBuilder:
                 pythoncom.CoInitialize()
                 c = wmi.WMI()
                 for cpu in c.Win32_Processor():
-                    d["socket"]          = str(cpu.SocketDesignation or "N/A")
-                    d["manufacturer"]    = str(cpu.Manufacturer      or "N/A")
-                    d["max_clock_mhz"]   = str(cpu.MaxClockSpeed     or "N/A")
-                    d["l2_cache_kb"]     = str(cpu.L2CacheSize       or "N/A")
-                    d["l3_cache_kb"]     = str(cpu.L3CacheSize       or "N/A")
-                    d["processor_id"]    = str(cpu.ProcessorId       or "N/A").strip()
-                    d["virtualization"]  = (
+                    d["socket"]         = str(cpu.SocketDesignation or "N/A")
+                    d["manufacturer"]   = str(cpu.Manufacturer      or "N/A")
+                    d["max_clock_mhz"]  = str(cpu.MaxClockSpeed     or "N/A")
+                    d["l2_cache_kb"]    = str(cpu.L2CacheSize       or "N/A")
+                    d["l3_cache_kb"]    = str(cpu.L3CacheSize       or "N/A")
+                    d["processor_id"]   = str(cpu.ProcessorId       or "N/A").strip()
+                    d["virtualization"] = (
                         "Enabled"
                         if getattr(cpu, "VirtualizationFirmwareEnabled", False)
                         else "Disabled"
@@ -320,14 +417,14 @@ class SchemeBuilder:
                 c = wmi.WMI()
                 for disk in c.Win32_DiskDrive():
                     drives.append({
-                        "model":             str(disk.Model             or "N/A"),
-                        "interface":         str(disk.InterfaceType     or "N/A"),
-                        "media_type":        str(disk.MediaType         or "N/A"),
-                        "size_gb":           round(int(disk.Size or 0) / (1024 ** 3), 2),
-                        "partitions":        int(disk.Partitions        or 0),
-                        "serial_number":     str(disk.SerialNumber      or "N/A").strip(),
-                        "firmware":          str(disk.FirmwareRevision  or "N/A"),
-                        "bytes_per_sector":  int(disk.BytesPerSector    or 0),
+                        "model":            str(disk.Model            or "N/A"),
+                        "interface":        str(disk.InterfaceType    or "N/A"),
+                        "media_type":       str(disk.MediaType        or "N/A"),
+                        "size_gb":          round(int(disk.Size or 0) / (1024 ** 3), 2),
+                        "partitions":       int(disk.Partitions       or 0),
+                        "serial_number":    str(disk.SerialNumber     or "N/A").strip(),
+                        "firmware":         str(disk.FirmwareRevision or "N/A"),
+                        "bytes_per_sector": int(disk.BytesPerSector   or 0),
                     })
             except Exception:
                 pass
@@ -399,10 +496,10 @@ class SchemeBuilder:
                     adapters.append({
                         "description":     str(nic.Description or "N/A"),
                         "mac_address":     str(nic.MACAddress  or "N/A"),
-                        "ip_addresses":    list(nic.IPAddress             or []),
-                        "subnets":         list(nic.IPSubnet              or []),
-                        "default_gateway": list(nic.DefaultIPGateway      or []),
-                        "dns_servers":     list(nic.DNSServerSearchOrder  or []),
+                        "ip_addresses":    list(nic.IPAddress            or []),
+                        "subnets":         list(nic.IPSubnet             or []),
+                        "default_gateway": list(nic.DefaultIPGateway     or []),
+                        "dns_servers":     list(nic.DNSServerSearchOrder or []),
                         "dhcp_enabled":    bool(nic.DHCPEnabled),
                         "dhcp_server":     str(nic.DHCPServer or "N/A"),
                     })
@@ -419,17 +516,93 @@ class SchemeBuilder:
             try:
                 net = psutil.net_io_counters()
                 counters = {
-                    "bytes_sent_mb":  round(net.bytes_sent / (1024 ** 2), 2),
-                    "bytes_recv_mb":  round(net.bytes_recv / (1024 ** 2), 2),
-                    "packets_sent":   net.packets_sent,
-                    "packets_recv":   net.packets_recv,
-                    "errors_out":     net.errout,
-                    "errors_in":      net.errin,
+                    "bytes_sent_mb": round(net.bytes_sent / (1024 ** 2), 2),
+                    "bytes_recv_mb": round(net.bytes_recv / (1024 ** 2), 2),
+                    "packets_sent":  net.packets_sent,
+                    "packets_recv":  net.packets_recv,
+                    "errors_out":    net.errout,
+                    "errors_in":     net.errin,
                 }
             except Exception:
                 pass
 
         return {"adapters": adapters, "counters": counters}
+
+    # ============================================================
+    # OPEN PORTS
+    # Lists all TCP/UDP ports currently in LISTEN state.
+    # psutil is used when available; falls back to netstat parsing.
+    # ============================================================
+    def _collect_open_ports(self):
+        ports = []
+
+        if _HAS_PSUTIL:
+            try:
+                # Collect process name map once to avoid per-connection lookups
+                pid_names = {}
+                for proc in psutil.process_iter(["pid", "name"]):
+                    try:
+                        pid_names[proc.info["pid"]] = proc.info["name"]
+                    except Exception:
+                        pass
+
+                seen = set()
+                for conn in psutil.net_connections(kind="inet"):
+                    if conn.status not in ("LISTEN", "NONE") and conn.type == 1:
+                        # type 1 = SOCK_STREAM (TCP); include all UDP (no status)
+                        continue
+                    # For UDP (type 2) there is no status field
+                    laddr = conn.laddr
+                    if not laddr:
+                        continue
+                    key = (laddr.port, conn.type)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    proto = "TCP" if conn.type == 1 else "UDP"
+                    ports.append({
+                        "protocol":    proto,
+                        "local_port":  laddr.port,
+                        "local_addr":  laddr.ip,
+                        "pid":         conn.pid or 0,
+                        "process":     pid_names.get(conn.pid, "N/A"),
+                    })
+                ports.sort(key=lambda x: x["local_port"])
+            except Exception:
+                pass
+
+        # Fallback: parse netstat output when psutil is unavailable
+        if not ports:
+            try:
+                result = subprocess.run(
+                    ["netstat", "-ano"],
+                    capture_output=True, timeout=10,
+                )
+                for line in result.stdout.decode("utf-8", errors="replace").splitlines():
+                    parts = line.split()
+                    if len(parts) < 4:
+                        continue
+                    proto = parts[0].upper()
+                    if proto not in ("TCP", "UDP"):
+                        continue
+                    state = parts[3] if proto == "TCP" and len(parts) > 3 else "LISTEN"
+                    if "LISTEN" not in state.upper():
+                        continue
+                    try:
+                        local_port = int(parts[1].rsplit(":", 1)[-1])
+                    except ValueError:
+                        continue
+                    ports.append({
+                        "protocol":   proto,
+                        "local_port": local_port,
+                        "local_addr": parts[1].rsplit(":", 1)[0],
+                        "pid":        int(parts[-1]) if parts[-1].isdigit() else 0,
+                        "process":    "N/A",
+                    })
+            except Exception:
+                pass
+
+        return ports
 
     # ============================================================
     # AUDIO
@@ -443,10 +616,10 @@ class SchemeBuilder:
             c = wmi.WMI()
             for dev in c.Win32_SoundDevice():
                 devices.append({
-                    "name":          str(dev.Name         or "N/A"),
-                    "manufacturer":  str(dev.Manufacturer or "N/A"),
-                    "status":        str(dev.Status       or "N/A"),
-                    "pnp_device_id": str(dev.PNPDeviceID  or "N/A"),
+                    "name":           str(dev.Name         or "N/A"),
+                    "manufacturer":   str(dev.Manufacturer or "N/A"),
+                    "status":         str(dev.Status       or "N/A"),
+                    "pnp_device_id":  str(dev.PNPDeviceID  or "N/A"),
                 })
         except Exception:
             pass
@@ -458,7 +631,7 @@ class SchemeBuilder:
         return devices
 
     # ============================================================
-    # SOFTWARE
+    # SOFTWARE (Python runtime + app metadata)
     # ============================================================
     def _collect_software(self):
         return {
@@ -473,6 +646,403 @@ class SchemeBuilder:
             "base_directory":  os.getcwd(),
             "app_name":        "Sek Optimize",
         }
+
+    # ============================================================
+    # INSTALLED PROGRAMS
+    # Reads all three Uninstall registry hives to cover 32-bit,
+    # 64-bit, and per-user installations. Skips entries without
+    # a display name (system components, patches, etc.).
+    # ============================================================
+    def _collect_installed_programs(self):
+        programs = []
+        seen     = set()
+
+        for hive, key_path in _UNINSTALL_KEYS:
+            try:
+                key = winreg.OpenKey(hive, key_path)
+            except OSError:
+                continue
+            try:
+                i = 0
+                while True:
+                    try:
+                        sub_name = winreg.EnumKey(key, i)
+                        i += 1
+                    except OSError:
+                        break
+                    try:
+                        sub = winreg.OpenKey(key, sub_name)
+                        name    = self._reg_str(sub, "DisplayName")
+                        version = self._reg_str(sub, "DisplayVersion")
+                        vendor  = self._reg_str(sub, "Publisher")
+                        date    = self._reg_str(sub, "InstallDate")
+                        size_kb = self._reg_int(sub, "EstimatedSize")
+                        winreg.CloseKey(sub)
+
+                        if not name or name in seen:
+                            continue
+                        seen.add(name)
+
+                        programs.append({
+                            "name":        name,
+                            "version":     version or "N/A",
+                            "vendor":      vendor  or "N/A",
+                            "install_date":date    or "N/A",
+                            "size_kb":     size_kb,
+                        })
+                    except Exception:
+                        pass
+            finally:
+                winreg.CloseKey(key)
+
+        programs.sort(key=lambda x: x["name"].lower())
+        return programs
+
+    # ============================================================
+    # STARTUP PROGRAMS
+    # Reads the Run keys from HKCU and HKLM (both 32 and 64-bit).
+    # Each value under a Run key is one startup entry.
+    # ============================================================
+    def _collect_startup_programs(self):
+        entries = []
+        seen    = set()
+
+        for hive, key_path in _STARTUP_KEYS:
+            hive_label = "HKCU" if hive == winreg.HKEY_CURRENT_USER else "HKLM"
+            try:
+                key = winreg.OpenKey(hive, key_path)
+            except OSError:
+                continue
+            try:
+                i = 0
+                while True:
+                    try:
+                        name, data, _ = winreg.EnumValue(key, i)
+                        i += 1
+                    except OSError:
+                        break
+                    uid = f"{hive_label}:{name}"
+                    if uid in seen:
+                        continue
+                    seen.add(uid)
+                    entries.append({
+                        "name":    name,
+                        "command": str(data),
+                        "hive":    hive_label,
+                        "key":     key_path,
+                    })
+            finally:
+                winreg.CloseKey(key)
+
+        entries.sort(key=lambda x: x["name"].lower())
+        return entries
+
+    # ============================================================
+    # LOCAL USERS
+    # Uses WMI Win32_UserAccount for local accounts only.
+    # Falls back to 'net user' shell output when WMI is unavailable.
+    # ============================================================
+    def _collect_local_users(self):
+        users = []
+
+        if _HAS_WMI:
+            try:
+                pythoncom.CoInitialize()
+                c = wmi.WMI()
+                for u in c.Win32_UserAccount(LocalAccount=True):
+                    users.append({
+                        "name":        str(u.Name        or "N/A"),
+                        "full_name":   str(u.FullName    or "N/A"),
+                        "description": str(u.Description or "N/A"),
+                        "sid":         str(u.SID         or "N/A"),
+                        "disabled":    bool(u.Disabled),
+                        "locked_out":  bool(u.Lockout),
+                        "status":      str(u.Status      or "N/A"),
+                        "account_type": self._account_type_label(
+                            getattr(u, "AccountType", 0) or 0),
+                    })
+            except Exception:
+                pass
+            finally:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+        # Fallback: parse 'net user' output
+        if not users:
+            try:
+                result = subprocess.run(
+                    ["net", "user"],
+                    capture_output=True, timeout=10,
+                )
+                lines = result.stdout.decode("cp850", errors="replace").splitlines()
+                for line in lines:
+                    if line.startswith("-") or line.startswith("The") or not line.strip():
+                        continue
+                    for name in line.split():
+                        if name:
+                            users.append({
+                                "name":        name,
+                                "full_name":   "N/A",
+                                "description": "N/A",
+                                "sid":         "N/A",
+                                "disabled":    False,
+                                "locked_out":  False,
+                                "status":      "N/A",
+                                "account_type":"N/A",
+                            })
+            except Exception:
+                pass
+
+        return users
+
+    def _account_type_label(self, account_type):
+        """Translates Win32_UserAccount.AccountType bitmask to a readable label."""
+        labels = []
+        if account_type & 0x200:
+            labels.append("Domain")
+        if account_type & 0x001:
+            labels.append("Temporary Duplicate")
+        if account_type & 0x002:
+            labels.append("Normal")
+        if account_type & 0x004:
+            labels.append("Interdomain Trust")
+        if account_type & 0x008:
+            labels.append("Workstation Trust")
+        if account_type & 0x010:
+            labels.append("Server Trust")
+        return ", ".join(labels) if labels else "Unknown"
+
+    # ============================================================
+    # ANTIVIRUS
+    # Queries the Windows Security Center (WMI SecurityCenter2
+    # namespace) which enumerates registered AV products.
+    # Falls back to scanning the installed programs list for
+    # well-known antivirus display names.
+    # ============================================================
+    def _collect_antivirus(self):
+        av_list = []
+
+        # Primary source: Windows Security Center namespace
+        if _HAS_WMI:
+            try:
+                pythoncom.CoInitialize()
+                # SecurityCenter2 is available on Vista+ for the local machine
+                c = wmi.WMI(namespace=r"root\SecurityCenter2")
+                for av in c.AntiVirusProduct():
+                    # productState encodes enabled/updated status as a bitmask
+                    state      = int(getattr(av, "productState", 0) or 0)
+                    enabled    = bool((state >> 12) & 0xF != 0)
+                    up_to_date = bool((state >> 4)  & 0xF == 0)
+                    av_list.append({
+                        "name":          str(av.displayName        or "N/A"),
+                        "instance_guid": str(av.instanceGuid       or "N/A"),
+                        "path":          str(getattr(av, "pathToSignedProductExe", "N/A") or "N/A"),
+                        "enabled":       enabled,
+                        "up_to_date":    up_to_date,
+                        "source":        "SecurityCenter2",
+                    })
+            except Exception:
+                pass
+            finally:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+        # Fallback / supplement: scan installed programs
+        if not av_list:
+            try:
+                programs = self._collect_installed_programs()
+                for prog in programs:
+                    name_lower = prog["name"].lower()
+                    if any(kw in name_lower for kw in _AV_KEYWORDS):
+                        av_list.append({
+                            "name":          prog["name"],
+                            "instance_guid": "N/A",
+                            "path":          "N/A",
+                            "enabled":       None,
+                            "up_to_date":    None,
+                            "source":        "InstalledPrograms",
+                        })
+            except Exception:
+                pass
+
+        return av_list
+
+    # ============================================================
+    # EMAIL CLIENTS
+    # Detects installed email clients by cross-referencing the
+    # installed programs list. For Outlook, reads registered profiles
+    # and the MAPI account names from the registry. For Thunderbird,
+    # parses the profiles.ini file on disk.
+    # ============================================================
+    def _collect_email_clients(self):
+        results = []
+
+        installed_names = []
+        try:
+            installed_names = [
+                p["name"] for p in self._collect_installed_programs()
+            ]
+        except Exception:
+            pass
+
+        for client_label, meta in _EMAIL_CLIENTS.items():
+            keywords = meta["keywords"]
+            found    = any(
+                any(kw in inst.lower() for kw in keywords)
+                for inst in installed_names
+            )
+            if not found:
+                continue
+
+            entry = {
+                "client":   client_label,
+                "accounts": [],
+            }
+
+            # --- Outlook: registry profiles ---
+            if client_label == "Microsoft Outlook":
+                for prof_root in meta["profile_roots"]:
+                    accounts = self._outlook_accounts_from_registry(
+                        winreg.HKEY_CURRENT_USER, prof_root)
+                    if accounts:
+                        entry["accounts"].extend(accounts)
+                        break
+
+            # --- Thunderbird: profiles.ini ---
+            elif client_label == "Mozilla Thunderbird":
+                entry["accounts"] = self._thunderbird_accounts()
+
+            results.append(entry)
+
+        return results
+
+    def _outlook_accounts_from_registry(self, hive, profiles_path):
+        """
+        Walks HKCU\...\Profiles\<profile>\9375CFF0... to extract
+        account display names and email addresses stored by Outlook.
+        """
+        accounts = []
+        try:
+            profiles_key = winreg.OpenKey(hive, profiles_path)
+        except OSError:
+            return accounts
+
+        # Account data lives inside a subkey whose name starts with 9375CFF0
+        _ACCOUNT_SUBKEY = "9375CFF0413111d3B88A00104B2A6676"
+
+        try:
+            i = 0
+            while True:
+                try:
+                    profile_name = winreg.EnumKey(profiles_key, i)
+                    i += 1
+                except OSError:
+                    break
+                try:
+                    acct_key_path = f"{profiles_path}\\{profile_name}\\{_ACCOUNT_SUBKEY}"
+                    acct_root     = winreg.OpenKey(hive, acct_key_path)
+                    j = 0
+                    while True:
+                        try:
+                            acct_sub = winreg.EnumKey(acct_root, j)
+                            j += 1
+                        except OSError:
+                            break
+                        try:
+                            sub = winreg.OpenKey(acct_root, acct_sub)
+                            display = self._reg_str(sub, "Display Name")
+                            email   = self._reg_str(sub, "Email")
+                            smtp    = self._reg_str(sub, "SMTP Email Address")
+                            addr    = email or smtp or ""
+                            winreg.CloseKey(sub)
+                            if display or addr:
+                                accounts.append({
+                                    "profile":      profile_name,
+                                    "display_name": display or "N/A",
+                                    "email":        addr     or "N/A",
+                                })
+                        except Exception:
+                            pass
+                    winreg.CloseKey(acct_root)
+                except Exception:
+                    pass
+        finally:
+            winreg.CloseKey(profiles_key)
+
+        return accounts
+
+    def _thunderbird_accounts(self):
+        """
+        Reads %APPDATA%\Thunderbird\profiles.ini and then each profile's
+        prefs.js to extract mail.identity email addresses.
+        """
+        accounts   = []
+        appdata    = os.environ.get("APPDATA", "")
+        ini_path   = os.path.join(appdata, "Thunderbird", "profiles.ini")
+
+        if not os.path.isfile(ini_path):
+            return accounts
+
+        # Minimal INI parser (no configparser to keep stdlib usage lean)
+        profile_paths = []
+        current_path  = None
+        is_relative   = False
+        base_dir      = os.path.dirname(ini_path)
+
+        try:
+            with open(ini_path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.lower().startswith("path="):
+                        current_path = line.split("=", 1)[1]
+                    elif line.lower().startswith("isrelative="):
+                        is_relative = line.split("=", 1)[1].strip() == "1"
+                    elif line.startswith("[") and current_path:
+                        full = (
+                            os.path.join(base_dir, current_path)
+                            if is_relative else current_path
+                        )
+                        profile_paths.append(full)
+                        current_path = None
+                        is_relative  = False
+            # Flush last entry
+            if current_path:
+                full = (
+                    os.path.join(base_dir, current_path)
+                    if is_relative else current_path
+                )
+                profile_paths.append(full)
+        except Exception:
+            return accounts
+
+        # Parse prefs.js in each profile for identity email addresses
+        for prof_dir in profile_paths:
+            prefs_path = os.path.join(prof_dir, "prefs.js")
+            if not os.path.isfile(prefs_path):
+                continue
+            try:
+                with open(prefs_path, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        # Lines look like:
+                        # user_pref("mail.identity.id1.useremail", "user@example.com");
+                        if "useremail" in line and "user_pref" in line:
+                            parts = line.split('"')
+                            if len(parts) >= 4:
+                                key   = parts[1]
+                                value = parts[3]
+                                accounts.append({
+                                    "profile":      os.path.basename(prof_dir),
+                                    "display_name": key,
+                                    "email":        value,
+                                })
+            except Exception:
+                pass
+
+        return accounts
 
     # ============================================================
     # RUNTIME SNAPSHOT  (instantaneous values, changes every run)
@@ -538,7 +1108,7 @@ class SchemeBuilder:
         generated = data.get("generated_at", "")
         schema_v  = data.get("schema_version", "N/A")
 
-        skip_keys    = {"schema_version", "generated_at"}
+        skip_keys     = {"schema_version", "generated_at"}
         sections_html = ""
 
         for section_key, section_val in data.items():
@@ -549,9 +1119,9 @@ class SchemeBuilder:
             block = ""
 
             if isinstance(section_val, list):
+                # Flat list of dicts (gpu, audio, open_ports, etc.)
                 block = self._html_cards(section_val)
             elif isinstance(section_val, dict):
-                # Separate scalar pairs from sub-lists
                 scalar_pairs = [
                     (k, v) for k, v in section_val.items()
                     if not isinstance(v, list)
@@ -680,7 +1250,21 @@ class SchemeBuilder:
                     f"<tr><td><strong>{label}</strong></td>"
                     f"<td>{v}</td></tr>\n"
                 )
-            html += (
-                f"<div class='card'><table>{rows}</table></div>"
-            )
+            html += f"<div class='card'><table>{rows}</table></div>"
         return html
+
+    def _reg_str(self, key, value_name):
+        """Reads a string value from an open registry key. Returns '' on failure."""
+        try:
+            val, _ = winreg.QueryValueEx(key, value_name)
+            return str(val).strip()
+        except OSError:
+            return ""
+
+    def _reg_int(self, key, value_name):
+        """Reads an integer value from an open registry key. Returns 0 on failure."""
+        try:
+            val, _ = winreg.QueryValueEx(key, value_name)
+            return int(val)
+        except (OSError, ValueError, TypeError):
+            return 0
