@@ -59,55 +59,76 @@ class Reports(App):
     #
     # O codigo de resposta HTTP e exibido no log do aplicativo.
     # ============================================================
-    def send_report_api(self, url, key, method="POST"):
-        def _run():
-            self._progress_start("Enviando relatorio...")
-            self.log_title(f"Enviar Relatorio para API ({method})")
-            self.log_info(f"URL    : {url}")
-            self.log_info(f"Metodo : {method}")
-            try:
-                builder = SchemeBuilder()
-                data    = builder.collect()
-                payload = json.dumps(
-                    data, ensure_ascii=False).encode("utf-8")
+    def send_report_api(self, url: str, key: str, method: str = "POST") -> None:
+        """
+        Envia o relatório para a API em uma thread separada.
+        """
+        def _run() -> None:
+            self._progress_start("Enviando relatório...")
 
+            self.log_title(f"Enviar Relatório para API ({method})")
+            self.log_info(f"URL    : {url}")
+            self.log_info(f"Método : {method}")
+
+            try:
+                # Coleta os dados
+                builder = SchemeBuilder()
+                data = builder.collect()
+
+                payload = json.dumps(data, ensure_ascii=False, indent=None)
+
+                # Prepara a requisição
                 req = urllib.request.Request(
-                    url,
-                    data=payload,
+                    url=url,
+                    data=payload.encode("utf-8"),
                     method=method,
                 )
-                req.add_header("Content-Type",  "application/json; charset=utf-8")
+
+                req.add_header("Content-Type", "application/json; charset=utf-8")
                 req.add_header("Authorization", f"Bearer {key}")
-                req.add_header("X-API-Key",     key)
+                req.add_header("X-API-Key", key)
 
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    code = resp.getcode()
-                    body = resp.read().decode("utf-8", errors="replace")
+                # Executa a requisição
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    status_code = response.getcode()
+                    body = response.read().decode("utf-8", errors="replace")
 
-                self.log_ok(f"Resposta HTTP : {code}")
+                self.log_ok(f"Resposta HTTP: {status_code}")
+
                 if body.strip():
                     self.log_info("Corpo da resposta:")
                     for line in body.splitlines():
                         self.log(f"  {line}")
 
             except urllib.error.HTTPError as e:
-                body = ""
-                try:
-                    body = e.read().decode("utf-8", errors="replace")
-                except Exception:
-                    pass
-                self.log_error(f"HTTP {e.code} - {e.reason}")
-                if body.strip():
-                    self.log_info("Corpo da resposta:")
-                    for line in body.splitlines():
-                        self.log(f"  {line}")
+                self._handle_http_error(e)
+
             except urllib.error.URLError as e:
-                self.log_error(f"Erro de conexao: {e.reason}")
+                self.log_error(f"Erro de conexão: {e.reason}")
+
             except Exception as e:
-                self.log_error(str(e))
+                self.log_error(f"Erro inesperado: {e}")
+
             finally:
                 self._progress_stop()
                 self.log_sep()
                 self.log("")
 
+        # Inicia em thread (daemon)
         threading.Thread(target=_run, daemon=True).start()
+
+
+        def _handle_http_error(self, e: urllib.error.HTTPError) -> None:
+            """Método auxiliar para tratar erros HTTP de forma limpa."""
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+
+            self.log_error(f"HTTP {e.code} - {e.reason}")
+
+            if body.strip():
+                self.log_info("Corpo da resposta:")
+                for line in body.splitlines():
+                    self.log(f"  {line}")

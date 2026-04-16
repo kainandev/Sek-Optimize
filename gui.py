@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from collections import defaultdict
 
-from config import ACTIONS, AUTOCOMPLETE_COMMANDS, VERSION_SOFTWARE, GROUPS_FILE, DEFAULT_GROUPS
+from config import ACTIONS, AUTOCOMPLETE_COMMANDS, VERSION_SOFTWARE, GROUPS_FILE, DEFAULT_GROUPS, CREDITS
 
 # ============================================================
 # PALETA DE CORES
@@ -165,11 +165,65 @@ class GUI:
         hdr.pack_propagate(False)
 
         tk.Label(hdr, text="Sek Optimize", bg=C_PANEL, fg=C_ACCENT,
-                 font=FONT_TITLE).pack(side=tk.LEFT, padx=16, pady=10)
+                font=FONT_TITLE).pack(side=tk.LEFT, padx=16, pady=10)
         tk.Label(hdr, text=f"v{VERSION_SOFTWARE}", bg=C_PANEL, fg=C_DIM,
-                 font=FONT_SMALL).pack(side=tk.LEFT, pady=10)
+                font=FONT_SMALL).pack(side=tk.LEFT, pady=10)
+
+        # Botao de creditos discreto no canto direito do header
+        btn_about = tk.Label(
+            hdr, text="Sobre o Software", bg=C_PANEL, fg=C_DIM,
+            font=FONT_SMALL, padx=14, cursor="hand2",
+        )
+        btn_about.pack(side=tk.RIGHT, pady=10)
+        btn_about.bind("<Button-1>", lambda e: self._show_credits())
+        btn_about.bind("<Enter>",    lambda e: btn_about.config(fg=C_TEXT))
+        btn_about.bind("<Leave>",    lambda e: btn_about.config(fg=C_DIM))
 
         tk.Frame(self.root, bg=C_BORDER, height=1).pack(fill=tk.X)
+
+    # ============================================================
+    # JANELA DE CREDITOS
+    # ============================================================
+    def _show_credits(self):
+        win = tk.Toplevel(self.root)
+        win.title("Sobre")
+        win.resizable(False, False)
+        win.configure(bg=C_CARD)
+        win.grab_set()
+
+        # Centraliza em relacao a janela principal
+        self.root.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width()  // 2) - 180
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 120
+        win.geometry(f"360x240+{x}+{y}")
+
+        tk.Frame(win, bg=C_ACCENT, height=3).pack(fill=tk.X)
+
+        body = tk.Frame(win, bg=C_CARD, padx=28, pady=20)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(body, text="Sek Optimize", bg=C_CARD, fg=C_ACCENT,
+                font=FONT_TITLE).pack(anchor="w")
+        tk.Label(body, text=f"Versao  {VERSION_SOFTWARE}", bg=C_CARD, fg=C_DIM,
+                font=FONT_SMALL).pack(anchor="w", pady=(2, 14))
+
+        info = CREDITS
+
+        for label, value in info:
+            row = tk.Frame(body, bg=C_CARD)
+            row.pack(fill=tk.X, pady=1)
+            tk.Label(row, text=f"{label}:", bg=C_CARD, fg=C_DIM,
+                    font=FONT_SMALL, width=12, anchor="w").pack(side=tk.LEFT)
+            tk.Label(row, text=value, bg=C_CARD, fg=C_TEXT,
+                    font=FONT_SMALL, anchor="w").pack(side=tk.LEFT)
+
+        tk.Frame(body, bg=C_BORDER, height=1).pack(fill=tk.X, pady=(14, 10))
+
+        tk.Label(body, text="github.com/kainandev/Sek-Optimize",
+                bg=C_CARD, fg=C_DIM, font=FONT_SMALL).pack(anchor="w")
+
+        btn_fechar = self._make_flat_btn(body, "Fechar", win.destroy)
+        btn_fechar.pack(anchor="e", pady=(14, 0))
 
     # ============================================================
     # CORPO
