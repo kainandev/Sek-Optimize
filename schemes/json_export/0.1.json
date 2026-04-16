@@ -1,0 +1,82 @@
+{
+	"version": 0.1,
+	"machine": {
+		"name": "",
+		"ip_address": "",
+		"mac_address": "",
+		"os": {
+			"name": "",
+			"version": "",
+			"architecture": "",
+			"build": ""
+		},
+		"hardware": {
+			"processor": "",
+			"cores": "",
+			"ram_total": "",
+			"manufacturer": "",
+			"model": "",
+			"serial_number": ""
+		},
+		"users": [
+			{
+				"name": "",
+				"created_at": "",
+				"last_login": "",
+				"is_admin": false
+			}
+		],
+		"stats": {
+			"cpu": "",
+			"memory": "",
+			"disk": "",
+			"uptime": "",
+			"last_boot": ""
+		},
+		"disks": [
+			{
+				"name": "",
+				"type": "",
+				"size": "",
+				"used": "",
+				"available": "",
+				"health_status": ""
+			}
+		],
+		"network": [
+			{
+				"interface": "",
+				"ip_v4": "",
+				"ip_v6": "",
+				"mac": "",
+				"status": ""
+			}
+		],
+		"printers": [
+			{
+				"name": "",
+				"driver": "",
+				"location": "",
+				"status": "",
+				"last_use": ""
+			}
+		],
+		"programs": [
+			{
+				"name": "",
+				"version": "",
+				"location": "",
+				"install_date": "",
+				"publisher": ""
+			}
+		],
+		"security": {
+			"antivirus": "",
+			"firewall_enabled": false,
+			"updates_pending": false
+		}
+	},
+	"software": {
+		"version": "0.2.1"
+	}
+}

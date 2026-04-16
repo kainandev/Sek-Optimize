@@ -23,7 +23,7 @@ from collections import defaultdict
 
 from util.system_details import *
 
-VERSION_SOFTWARE = "0.2.0"
+VERSION_SOFTWARE = "0.2.1"
 
 APP_ASCII = [
 "           .:===++++++===:.           ",
@@ -48,6 +48,12 @@ APP_ASCII = [
 "                                      "
 ]
 
+CREDITS = [
+    ("Autor", "Kainan H. C. Santos"),
+    ("Linguagem",  "Python + Tkinter"),
+    ("Plataforma", "Windows 10 / 11"),
+    ("Licenca",    "GNU GPL v3"),
+]
 
 # ============================================================
 # COMMANDS

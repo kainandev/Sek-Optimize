@@ -1,0 +1,234 @@
+{
+    "schema_version": "0.2",
+    "generated_at": "YYYY-MM-DD HH:MM:SS",
+    "system": {
+        "hostname": "Nome do computador",
+        "username": "Usuário logado",
+        "os": "Windows | Linux | macOS",
+        "os_release": "Versão do sistema (ex: 11 para Windows 11)",
+        "os_version": "Versão completa (ex: 10.0.26200)",
+        "os_architecture": "AMD64 | x86 | ARM64",
+        "boot_mode": "Legacy BIOS | UEFI",
+        "boot_time": "Data e hora do último boot",
+        "uptime": "Tempo desde o boot (ex: 79h 21m 50s)",
+        "processes": "Número total de processos em execução",
+        "os_install_date": "YYYY-MM-DD",
+        "os_serial": "Número de série do SO",
+        "os_build": "Número do build do SO",
+        "os_registered_to": "Usuário de registro do SO",
+        "os_edition": "Ex: Microsoft Windows 11 Pro",
+        "os_license_type": "Pro | Home | Enterprise"
+    },
+    "bios": {
+        "vendor": "Fabricante do BIOS",
+        "version": "Versão do BIOS",
+        "release_date": "YYYYMMDD",
+        "serial_number": "String",
+        "smbios_version": "Versão SMBIOS"
+    },
+    "motherboard": {
+        "manufacturer": "Fabricante",
+        "model": "Modelo",
+        "serial_number": "String",
+        "version": "Versão"
+    },
+    "cpu": {
+        "architecture": "AMD64 | x86",
+        "processor": "String descritiva",
+        "physical_cores": "Inteiro",
+        "logical_cores": "Inteiro",
+        "frequency_current_mhz": "Float (MHz atual)",
+        "frequency_min_mhz": "Float (MHz mínimo)",
+        "frequency_max_mhz": "Float (MHz máximo)",
+        "model": "Nome completo do processador",
+        "vendor_id": "GenuineIntel | AuthenticAMD",
+        "bits": "32 | 64",
+        "frequency_base": "String (ex: 2.2000 GHz)",
+        "l2_cache_size": "Inteiro (bytes)",
+        "l3_cache_size": "Inteiro (bytes)",
+        "stepping": "Inteiro",
+        "model_id": "Inteiro",
+        "family": "Inteiro",
+        "flags": ["Array de strings com capacidades do CPU"],
+        "socket": "Tipo de soquete",
+        "manufacturer": "Fabricante",
+        "max_clock_mhz": "String",
+        "l2_cache_kb": "String",
+        "l3_cache_kb": "String",
+        "processor_id": "String em hex",
+        "virtualization": "Enabled | Disabled"
+    },
+    "memory": {
+        "total_gb": "Float (GB total)",
+        "available_gb": "Float (GB disponível)",
+        "used_gb": "Float (GB em uso)",
+        "usage_pct": "Float (0-100)",
+        "swap_total_gb": "Float",
+        "swap_used_gb": "Float",
+        "swap_usage_pct": "Float (0-100)",
+        "total_slots": "Inteiro",
+        "max_supported_gb": "Float",
+        "modules": [
+            {
+                "slot": "DIMM A | DIMM B",
+                "bank": "String ou N/A",
+                "capacity_gb": "Float",
+                "speed_mhz": "String",
+                "configured_mhz": "String",
+                "type": "DDR3 | DDR4 | DDR5 | Unknown",
+                "form_factor": "SODIMM | DIMM",
+                "manufacturer": "String (ID)",
+                "part_number": "String",
+                "serial_number": "String",
+                "voltage_mv": "String (mV)"
+            }
+        ]
+    },
+    "storage": {
+        "drives": [
+            {
+                "model": "Modelo do drive",
+                "interface": "SCSI | SATA | NVMe",
+                "media_type": "Fixed hard disk media | SSD",
+                "size_gb": "Float",
+                "partitions": "Inteiro",
+                "serial_number": "String",
+                "firmware": "String",
+                "bytes_per_sector": "Inteiro"
+            }
+        ],
+        "volumes": [
+            {
+                "mount_point": "C:\\ | /mnt/",
+                "filesystem": "NTFS | ext4 | APFS",
+                "total_gb": "Float",
+                "used_gb": "Float",
+                "free_gb": "Float",
+                "usage_pct": "Float (0-100)"
+            }
+        ]
+    },
+    "gpu": [
+        {
+            "name": "Nome da GPU",
+            "adapter_ram_mb": "Float",
+            "driver_version": "String",
+            "driver_date": "YYYYMMDD",
+            "video_processor": "String",
+            "video_mode": "String (resolução e cores)",
+            "current_bpp": "Bits per pixel",
+            "current_hz": "String (Hz de refresh)",
+            "status": "OK | Degraded",
+            "pnp_device_id": "String PCI ID"
+        }
+    ],
+    "network": {
+        "adapters": [
+            {
+                "description": "Nome da interface",
+                "mac_address": "XX:XX:XX:XX:XX:XX",
+                "ip_addresses": ["Array de IPs (v4 e v6)"],
+                "subnets": ["Array de máscaras"],
+                "default_gateway": ["Array de gateways"],
+                "dns_servers": ["Array de DNS"],
+                "dhcp_enabled": "true | false",
+                "dhcp_server": "IP ou range"
+            }
+        ],
+        "counters": {
+            "bytes_sent_mb": "Float",
+            "bytes_recv_mb": "Float",
+            "packets_sent": "Inteiro",
+            "packets_recv": "Inteiro",
+            "errors_out": "Inteiro",
+            "errors_in": "Inteiro"
+        }
+    },
+    "open_ports": [
+        {
+            "protocol": "TCP | UDP",
+            "local_port": "Inteiro",
+            "local_addr": "IP ou wildcard (0.0.0.0 | ::)",
+            "pid": "Inteiro (Process ID)",
+            "process": "Nome do executável"
+        }
+    ],
+    "audio": [
+        {
+            "name": "Nome do dispositivo",
+            "manufacturer": "Fabricante",
+            "status": "OK | Degraded",
+            "pnp_device_id": "String PCI ID"
+        }
+    ],
+    "software": {
+        "python_version": "X.Y.Z",
+        "python_build": "String do build",
+        "python_compiler": "Compilador usado",
+        "executable_type": "Script (.py) | Executable",
+        "base_directory": "Caminho do projeto",
+        "app_name": "Nome da aplicação"
+    },
+    "installed_programs": [
+        {
+            "name": "Nome do programa",
+            "version": "X.Y.Z",
+            "vendor": "Fabricante",
+            "install_date": "YYYYMMDD ou N/A",
+            "size_kb": "Inteiro (KB)"
+        }
+    ],
+    "startup_programs": [
+        {
+            "name": "Nome do programa",
+            "command": "Caminho completo do executável",
+            "hive": "HKLM | HKCU",
+            "key": "Chave do registro Windows"
+        }
+    ],
+    "local_users": [
+        {
+            "name": "Nome do usuário",
+            "full_name": "Nome completo ou N/A",
+            "description": "Descrição da conta",
+            "sid": "S-1-5-...",
+            "disabled": "true | false",
+            "locked_out": "true | false",
+            "status": "OK | Degraded",
+            "account_type": "Local | Domain"
+        }
+    ],
+    "antivirus": [
+        {
+            "name": "Nome do antivírus",
+            "instance_guid": "UUID",
+            "path": "Caminho ou URL",
+            "enabled": "true | false",
+            "up_to_date": "true | false",
+            "source": "SecurityCenter2 | WMI"
+        }
+    ],
+    "email_clients": [
+        {
+            "client": "Nome do cliente de email",
+            "accounts": [
+                {
+                    "profile": "Nome do perfil",
+                    "display_name": "Nome exibido",
+                    "email": "endereco@email.com"
+                }
+            ]
+        }
+    ],
+    "runtime": {
+        "cpu_usage_pct": "Float (0-100)",
+        "cpu_freq_mhz": "Float",
+        "ram_usage_pct": "Float (0-100)",
+        "ram_used_gb": "Float",
+        "ram_available_gb": "Float",
+        "disk_read_gb": "Float (acumulado)",
+        "disk_write_gb": "Float (acumulado)",
+        "net_sent_mb": "Float",
+        "net_recv_mb": "Float"
+    }
+}
