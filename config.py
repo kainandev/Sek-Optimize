@@ -52,7 +52,7 @@ CREDITS = [
     ("Autor", "Kainan H. C. Santos"),
     ("Linguagem",  "Python + Tkinter"),
     ("Plataforma", "Windows 10 / 11"),
-    ("Licenca",    "GPL")
+    ("Licenca",    "GNU GPL v3"),
 ]
 
 # ============================================================
