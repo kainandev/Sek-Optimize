@@ -10,6 +10,8 @@ import subprocess
 import winreg
 from datetime import datetime
 
+from util.report_html import render_report
+
 try:
     import psutil
     _HAS_PSUTIL = True
@@ -1100,89 +1102,13 @@ class SchemeBuilder:
         return output.getvalue()
 
     def to_html(self, data=None):
-        """Serializes collected data to a self-contained HTML document."""
+        """
+        Serializes collected data to a self-contained HTML report with a
+        sidebar for navigating between sections (see util.report_html).
+        """
         if data is None:
             data = self.collect()
-
-        hostname  = data.get("system", {}).get("hostname", "N/A")
-        generated = data.get("generated_at", "")
-        schema_v  = data.get("schema_version", "N/A")
-
-        skip_keys     = {"schema_version", "generated_at"}
-        sections_html = ""
-
-        for section_key, section_val in data.items():
-            if section_key in skip_keys:
-                continue
-
-            title = section_key.upper().replace("_", " ")
-            block = ""
-
-            if isinstance(section_val, list):
-                # Flat list of dicts (gpu, audio, open_ports, etc.)
-                block = self._html_cards(section_val)
-            elif isinstance(section_val, dict):
-                scalar_pairs = [
-                    (k, v) for k, v in section_val.items()
-                    if not isinstance(v, list)
-                ]
-                list_pairs = [
-                    (k, v) for k, v in section_val.items()
-                    if isinstance(v, list)
-                ]
-                if scalar_pairs:
-                    block += self._html_kv_table(scalar_pairs)
-                for sub_key, sub_list in list_pairs:
-                    sub_title = sub_key.replace("_", " ").title()
-                    block += (
-                        f"<p class='sub-title'>{sub_title}</p>"
-                        + self._html_cards(sub_list)
-                    )
-            else:
-                block = self._html_kv_table([(section_key, section_val)])
-
-            sections_html += (
-                f"<div class='section'><h2>{title}</h2>{block}</div>\n"
-            )
-
-        return (
-            "<!DOCTYPE html>\n"
-            "<html lang=\"en\">\n"
-            "<head>\n"
-            "  <meta charset=\"UTF-8\">\n"
-            f"  <title>System Report - {hostname}</title>\n"
-            "  <style>\n"
-            "    *{box-sizing:border-box;margin:0;padding:0}\n"
-            "    body{font-family:'Segoe UI',Arial,sans-serif;"
-            "background:#18181f;color:#d8d8e8;padding:28px}\n"
-            "    h1{color:#4a80ff;font-size:1.5em;margin-bottom:4px}\n"
-            "    p.meta{color:#6868a0;font-size:.83em;margin-bottom:24px}\n"
-            "    .section{margin-bottom:26px}\n"
-            "    h2{color:#4a80ff;font-size:.92em;text-transform:uppercase;"
-            "letter-spacing:.08em;border-bottom:1px solid #2e2e3e;"
-            "padding-bottom:5px;margin-bottom:10px}\n"
-            "    p.sub-title{color:#6868a0;font-size:.8em;margin:10px 0 4px}\n"
-            "    table{border-collapse:collapse;width:100%;max-width:900px;"
-            "margin-bottom:8px}\n"
-            "    th,td{padding:5px 14px;text-align:left;"
-            "border-bottom:1px solid #22222e;font-size:.85em}\n"
-            "    th{background:#22222e;color:#4a80ff;font-weight:600}\n"
-            "    tr:hover td{background:#22222e}\n"
-            "    .card{background:#1c1c28;border:1px solid #2e2e3e;"
-            "border-radius:4px;padding:10px 14px;margin-bottom:8px;"
-            "max-width:900px}\n"
-            "  </style>\n"
-            "</head>\n"
-            "<body>\n"
-            "  <h1>System Report</h1>\n"
-            f"  <p class='meta'>"
-            f"Host: <strong>{hostname}</strong>&nbsp;&nbsp;"
-            f"Generated: {generated}&nbsp;&nbsp;"
-            f"Schema: v{schema_v}</p>\n"
-            f"{sections_html}"
-            "</body>\n"
-            "</html>"
-        )
+        return render_report(data)
 
     # ============================================================
     # PERSISTENCE
@@ -1215,43 +1141,6 @@ class SchemeBuilder:
                 else:
                     items.append((full, v))
         return items
-
-    def _html_kv_table(self, pairs):
-        """Renders key/value pairs as a two-column HTML table."""
-        if not pairs:
-            return ""
-        rows = ""
-        for k, v in pairs:
-            label = str(k).replace("_", " ").title()
-            if isinstance(v, list):
-                v = "; ".join(str(x) for x in v)
-            rows += f"<tr><td><strong>{label}</strong></td><td>{v}</td></tr>\n"
-        return (
-            "<table>"
-            "<tr><th>Property</th><th>Value</th></tr>"
-            f"{rows}"
-            "</table>"
-        )
-
-    def _html_cards(self, items):
-        """Renders a list of dicts as stacked cards (one card per item)."""
-        if not items:
-            return "<p style='color:#6868a0;font-size:.83em'>No data.</p>"
-        html = ""
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            rows = ""
-            for k, v in item.items():
-                label = str(k).replace("_", " ").title()
-                if isinstance(v, list):
-                    v = "; ".join(str(x) for x in v)
-                rows += (
-                    f"<tr><td><strong>{label}</strong></td>"
-                    f"<td>{v}</td></tr>\n"
-                )
-            html += f"<div class='card'><table>{rows}</table></div>"
-        return html
 
     def _reg_str(self, key, value_name):
         """Reads a string value from an open registry key. Returns '' on failure."""
