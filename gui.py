@@ -732,8 +732,9 @@ class GUI:
     # estao preenchidos, com feedback visual imediato via trace.
     # ============================================================
     def _build_tab_relatorios(self, parent):
-        container = tk.Frame(parent, bg=C_BG)
-        container.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        scroll    = ScrollableFrame(parent, bg=C_BG)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        container = scroll.inner
 
         # --------------------------------------------------------
         # SECAO 1: Exportar para Arquivo
@@ -894,10 +895,102 @@ class GUI:
         self._btn_send.pack(side=tk.RIGHT)
         self._btn_send.bind("<Button-1>", lambda e: self._do_send_api())
 
+        # --------------------------------------------------------
+        # SECAO 3: Converter JSON para HTML
+        # --------------------------------------------------------
+        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X, pady=(10, 0))
+
+        sec3_hdr = tk.Frame(container, bg=C_CARD2)
+        sec3_hdr.pack(fill=tk.X)
+
+        tk.Label(
+            sec3_hdr, text="  Converter JSON para HTML",
+            bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
+            anchor="w", pady=8,
+        ).pack(fill=tk.X)
+
+        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X)
+
+        sec3_body = tk.Frame(container, bg=C_BG)
+        sec3_body.pack(fill=tk.X, padx=12, pady=10)
+
+        # Origem: arquivo unico ou pasta (relatorio consolidado)
+        tk.Label(
+            sec3_body, text="Origem:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._convert_mode = tk.StringVar(value="file")
+        convert_radio_row = tk.Frame(sec3_body, bg=C_BG)
+        convert_radio_row.pack(fill=tk.X, pady=(3, 10))
+
+        tk.Radiobutton(
+            convert_radio_row, text="Arquivo JSON",
+            variable=self._convert_mode, value="file",
+            bg=C_BG, fg=C_TEXT, selectcolor=C_CARD2,
+            activebackground=C_BG, activeforeground=C_TEXT,
+            highlightthickness=0, font=FONT_SMALL,
+        ).pack(side=tk.LEFT, padx=(0, 14))
+
+        tk.Radiobutton(
+            convert_radio_row, text="Pasta (varios JSONs)",
+            variable=self._convert_mode, value="folder",
+            bg=C_BG, fg=C_TEXT, selectcolor=C_CARD2,
+            activebackground=C_BG, activeforeground=C_TEXT,
+            highlightthickness=0, font=FONT_SMALL,
+        ).pack(side=tk.LEFT)
+
+        # Caminho de origem
+        tk.Label(
+            sec3_body, text="Caminho:",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
+        ).pack(fill=tk.X)
+
+        self._convert_path_var = tk.StringVar()
+        convert_path_row = tk.Frame(sec3_body, bg=C_BG)
+        convert_path_row.pack(fill=tk.X, pady=(3, 4))
+
+        tk.Entry(
+            convert_path_row,
+            textvariable=self._convert_path_var,
+            bg=C_CARD, fg=C_TEXT,
+            insertbackground=C_TEXT,
+            relief="flat", font=FONT_MONO,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+
+        self._make_flat_btn(
+            convert_path_row, "Buscar", self._browse_convert_path,
+        ).pack(side=tk.LEFT, padx=(4, 0))
+
+        tk.Label(
+            sec3_body,
+            text="Pasta gera um unico HTML consolidado, com cada"
+                 " maquina e suas secoes na barra lateral.",
+            bg=C_BG, fg=C_DIM, font=FONT_SMALL,
+            anchor="w", justify="left", wraplength=390,
+        ).pack(fill=tk.X, pady=(0, 8))
+
+        # Botao de conversao; inicia desabilitado
+        convert_row = tk.Frame(sec3_body, bg=C_BG)
+        convert_row.pack(fill=tk.X)
+
+        self._btn_convert = tk.Label(
+            convert_row,
+            text="Converter",
+            bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4,
+            cursor="arrow", relief="flat",
+        )
+        self._btn_convert.pack(side=tk.RIGHT)
+        self._btn_convert.bind("<Button-1>", lambda e: self._do_convert())
+
         # Traces para reatividade dos botoes
-        self._report_path_var.trace("w", self._update_export_btn)
-        self._api_url_var.trace("w",    self._update_send_btn)
-        self._api_key_var.trace("w",    self._update_send_btn)
+        self._report_path_var.trace("w",  self._update_export_btn)
+        self._api_url_var.trace("w",      self._update_send_btn)
+        self._api_key_var.trace("w",      self._update_send_btn)
+        self._convert_path_var.trace("w", self._update_convert_btn)
+
+        scroll.bind_children_scroll()
 
     # ============================================================
     # CALLBACKS DA ABA RELATORIOS
@@ -959,6 +1052,34 @@ class GUI:
             return
         method = self._api_method_var.get()
         self.app.send_report_api(url, key, method)
+
+    def _browse_convert_path(self):
+        if self._convert_mode.get() == "folder":
+            path = filedialog.askdirectory(
+                title="Selecione a pasta com os arquivos JSON",
+            )
+        else:
+            path = filedialog.askopenfilename(
+                title="Selecione o JSON",
+                filetypes=[("JSON", "*.json")],
+            )
+        if path:
+            self._convert_path_var.set(path)
+
+    def _update_convert_btn(self, *_):
+        """Ativa o botao Converter apenas quando a origem esta preenchida."""
+        if self._convert_path_var.get().strip():
+            self._set_btn_active(self._btn_convert)
+        else:
+            self._set_btn_inactive(self._btn_convert)
+
+    def _do_convert(self):
+        """Aciona a conversao de JSON(s) para HTML se o botao estiver ativo."""
+        path = self._convert_path_var.get().strip()
+        if not path:
+            return
+        is_folder = self._convert_mode.get() == "folder"
+        self.app.convert_json_to_html(path, is_folder)
 
     # ============================================================
     # PAINEL DE LOG

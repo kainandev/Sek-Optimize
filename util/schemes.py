@@ -2,6 +2,7 @@ import json
 import csv
 import io
 import os
+import re
 import sys
 import platform
 import socket
@@ -897,6 +898,14 @@ class SchemeBuilder:
                 any(kw in inst.lower() for kw in keywords)
                 for inst in installed_names
             )
+
+            # Office suites rarely list "Outlook" by name in Add/Remove
+            # Programs (e.g. "Microsoft Office Professional Plus 2016"),
+            # so fall back to the App Paths registry entry Outlook always
+            # registers regardless of the bundling product's display name.
+            if client_label == "Microsoft Outlook" and not found:
+                found = self._outlook_app_path_exists()
+
             if not found:
                 continue
 
@@ -922,10 +931,33 @@ class SchemeBuilder:
 
         return results
 
+    def _outlook_app_path_exists(self):
+        """
+        Checks the App Paths registry entry Outlook always registers on
+        install, independent of the Office product's display name.
+        """
+        for key_path in (
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE",
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE",
+        ):
+            try:
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
+                winreg.CloseKey(key)
+                return True
+            except OSError:
+                continue
+        return False
+
     def _outlook_accounts_from_registry(self, hive, profiles_path):
         """
         Walks HKCU\...\Profiles\<profile>\9375CFF0... to extract
         account display names and email addresses stored by Outlook.
+
+        Modern Outlook (2016+) stores the address under "Account Name"
+        rather than the legacy "Email"/"SMTP Email Address" fields, and
+        also lists non-mail services (e.g. the Outlook Address Book) under
+        the same subkey tree, so entries are kept only when an address is
+        actually resolvable.
         """
         accounts = []
         try:
@@ -945,8 +977,9 @@ class SchemeBuilder:
                 except OSError:
                     break
                 try:
-                    acct_key_path = f"{profiles_path}\\{profile_name}\\{_ACCOUNT_SUBKEY}"
-                    acct_root     = winreg.OpenKey(hive, acct_key_path)
+                    acct_key_path   = f"{profiles_path}\\{profile_name}\\{_ACCOUNT_SUBKEY}"
+                    acct_root       = winreg.OpenKey(hive, acct_key_path)
+                    seen_in_profile = set()
                     j = 0
                     while True:
                         try:
@@ -956,17 +989,22 @@ class SchemeBuilder:
                             break
                         try:
                             sub = winreg.OpenKey(acct_root, acct_sub)
-                            display = self._reg_str(sub, "Display Name")
-                            email   = self._reg_str(sub, "Email")
-                            smtp    = self._reg_str(sub, "SMTP Email Address")
-                            addr    = email or smtp or ""
+                            display  = self._reg_str(sub, "Display Name")
+                            email    = self._reg_str(sub, "Email")
+                            smtp     = self._reg_str(sub, "SMTP Email Address")
+                            acct_nm  = self._reg_str(sub, "Account Name")
                             winreg.CloseKey(sub)
-                            if display or addr:
-                                accounts.append({
-                                    "profile":      profile_name,
-                                    "display_name": display or "N/A",
-                                    "email":        addr     or "N/A",
-                                })
+
+                            addr = email or smtp or (acct_nm if "@" in acct_nm else "")
+                            if not addr or addr in seen_in_profile:
+                                continue
+                            seen_in_profile.add(addr)
+
+                            accounts.append({
+                                "profile":      profile_name,
+                                "display_name": display or acct_nm or "N/A",
+                                "email":        addr,
+                            })
                         except Exception:
                             pass
                     winreg.CloseKey(acct_root)
@@ -1021,26 +1059,39 @@ class SchemeBuilder:
         except Exception:
             return accounts
 
-        # Parse prefs.js in each profile for identity email addresses
+        # Parse prefs.js in each profile for identity email addresses.
+        # Each identity spans two separate pref lines (useremail and
+        # fullName), so they're collected per identity id and merged.
         for prof_dir in profile_paths:
             prefs_path = os.path.join(prof_dir, "prefs.js")
             if not os.path.isfile(prefs_path):
                 continue
             try:
+                identities = {}
                 with open(prefs_path, encoding="utf-8", errors="replace") as f:
                     for line in f:
                         # Lines look like:
                         # user_pref("mail.identity.id1.useremail", "user@example.com");
-                        if "useremail" in line and "user_pref" in line:
-                            parts = line.split('"')
-                            if len(parts) >= 4:
-                                key   = parts[1]
-                                value = parts[3]
-                                accounts.append({
-                                    "profile":      os.path.basename(prof_dir),
-                                    "display_name": key,
-                                    "email":        value,
-                                })
+                        # user_pref("mail.identity.id1.fullName", "Nome Sobrenome");
+                        match = re.search(
+                            r'mail\.identity\.(id\d+)\.(useremail|fullName)"\s*,\s*"([^"]*)"',
+                            line,
+                        )
+                        if not match:
+                            continue
+                        ident_id, field, value = match.groups()
+                        identities.setdefault(ident_id, {})[field] = value
+
+                for ident_id in sorted(identities):
+                    fields = identities[ident_id]
+                    email  = fields.get("useremail")
+                    if not email:
+                        continue
+                    accounts.append({
+                        "profile":      os.path.basename(prof_dir),
+                        "display_name": fields.get("fullName") or email,
+                        "email":        email,
+                    })
             except Exception:
                 pass
 

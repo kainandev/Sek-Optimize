@@ -31,6 +31,12 @@ C_SUCCESS = "#48d890"
 C_WARNING = "#f0a040"
 C_DANGER  = "#e85050"
 
+# Segunda cor categorica (identidade), usada apenas quando duas series
+# distintas de fato precisam ser diferenciadas (ex.: TCP vs UDP). Nao e
+# reutilizada como status - mantem-se fora do trio verde/laranja/vermelho
+# acima para nao ser confundida com um sinal de severidade.
+C_CAT2 = "#9085e9"
+
 SECTION_TITLES = {
     "system":             "Sistema",
     "bios":               "BIOS",
@@ -99,23 +105,185 @@ def _render_scalar(v):
     return _esc(v)
 
 
+def _status_color(pct):
+    """Verde/laranja/vermelho por limiar - escala de severidade fixa,
+    reservada e nunca reaproveitada como identidade de serie."""
+    try:
+        pct_f = float(pct)
+    except (TypeError, ValueError):
+        return C_ACCENT
+    if pct_f < 70:
+        return C_SUCCESS
+    if pct_f < 90:
+        return C_WARNING
+    return C_DANGER
+
+
 def _progress_bar(pct):
     try:
         pct_f = float(pct)
     except (TypeError, ValueError):
         pct_f = 0.0
     pct_f = max(0.0, min(100.0, pct_f))
-    if pct_f < 70:
-        color = C_SUCCESS
-    elif pct_f < 90:
-        color = C_WARNING
-    else:
-        color = C_DANGER
+    color = _status_color(pct_f)
     return (
         f"<div class='progress'><div class='progress-bar' "
         f"style='width:{pct_f}%;background:{color}'></div></div>"
         f"<small>{_esc(pct)}% uso</small>"
     )
+
+
+# ============================================================
+# GRAFICOS DE BARRA (HTML/CSS, sem dependencias externas)
+# ============================================================
+def _bar_chart(title, rows, unit="", legend=None, max_value=None, note=None):
+    """
+    rows: lista de tuplas (label, valor, cor).
+    legend: lista opcional de (label, cor) - exibida quando ha 2+ series
+            (identidade por cor); omitida para grafico de serie unica.
+    """
+    if not rows:
+        return ""
+
+    numeric = []
+    for label, value, color in rows:
+        try:
+            numeric.append(float(value))
+        except (TypeError, ValueError):
+            numeric.append(0.0)
+
+    max_v = max_value if max_value is not None else (max(numeric) or 1)
+
+    legend_html = ""
+    if legend:
+        items = "".join(
+            f"<span class='legend-item'>"
+            f"<span class='legend-swatch' style='background:{c}'></span>{_esc(l)}"
+            f"</span>"
+            for l, c in legend
+        )
+        legend_html = f"<div class='chart-legend'>{items}</div>"
+
+    bars = ""
+    for (label, value, color), value_f in zip(rows, numeric):
+        width_pct = 1.5 if max_v <= 0 else max(1.5, min(100.0, (value_f / max_v) * 100))
+        value_label = f"{_esc(value)}{_esc(unit)}"
+        bars += (
+            "<div class='bar-row'>"
+            f"<div class='bar-label' title='{_esc(label)}'>{_esc(label)}</div>"
+            f"<div class='bar-track' title='{_esc(label)}: {value_label}'>"
+            f"<div class='bar-fill' style='width:{width_pct}%;background:{color}'></div>"
+            "</div>"
+            f"<div class='bar-value'>{value_label}</div>"
+            "</div>"
+        )
+
+    note_html = f"<p class='chart-note'>{_esc(note)}</p>" if note else ""
+
+    return (
+        "<div class='chart'>"
+        f"<div class='chart-title'>{_esc(title)}</div>"
+        f"{legend_html}"
+        f"<div class='chart-body'>{bars}</div>"
+        f"{note_html}"
+        "</div>"
+    )
+
+
+def _render_storage_charts(storage):
+    if not isinstance(storage, dict):
+        return ""
+    volumes = storage.get("volumes") or []
+    drives  = storage.get("drives") or []
+    html    = ""
+
+    if volumes:
+        rows = [
+            (v.get("mount_point", "?"), v.get("usage_pct", 0), _status_color(v.get("usage_pct")))
+            for v in volumes
+        ]
+        html += _bar_chart(
+            "Uso por Volume", rows, unit="%", max_value=100,
+            note="Verde < 70% · Laranja < 90% · Vermelho ≥ 90%",
+        )
+
+    if drives:
+        rows = [
+            (d.get("model", "?"), d.get("size_gb", 0), C_ACCENT)
+            for d in drives
+        ]
+        html += _bar_chart("Capacidade dos Discos", rows, unit=" GB")
+
+    return html
+
+
+def _render_ports_charts(ports):
+    if not ports:
+        return ""
+
+    tcp_count = sum(1 for p in ports if str(p.get("protocol", "")).upper() == "TCP")
+    udp_count = sum(1 for p in ports if str(p.get("protocol", "")).upper() == "UDP")
+
+    html = _bar_chart(
+        "Portas por Protocolo",
+        [("TCP", tcp_count, C_ACCENT), ("UDP", udp_count, C_CAT2)],
+        legend=[("TCP", C_ACCENT), ("UDP", C_CAT2)],
+    )
+
+    counts = {}
+    for p in ports:
+        name = p.get("process") or "N/A"
+        counts[name] = counts.get(name, 0) + 1
+    top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+    if top:
+        rows = [(name, count, C_ACCENT) for name, count in top]
+        html += _bar_chart("Processos com Mais Portas Abertas", rows)
+
+    return html
+
+
+def _render_email_clients(clients):
+    if not clients:
+        return "<p class='empty'>Nenhum cliente de email detectado.</p>"
+
+    html = ""
+    for c in clients:
+        if not isinstance(c, dict):
+            continue
+        name     = c.get("client", "Desconhecido")
+        accounts = c.get("accounts") or []
+        html += (
+            f"<h3>{_esc(name)} "
+            f"<span class='tag'>{len(accounts)} conta(s)</span></h3>"
+        )
+        if accounts:
+            rows = [
+                {
+                    "Conta":  a.get("display_name", "N/A"),
+                    "Email":  a.get("email", "N/A"),
+                    "Perfil": a.get("profile", "N/A"),
+                }
+                for a in accounts
+            ]
+            html += _list_table(rows)
+        else:
+            html += (
+                "<p class='empty'>Cliente detectado, mas nenhuma conta "
+                "configurada foi encontrada.</p>"
+            )
+    return html
+
+
+def _render_section(key, value):
+    """Despacha secoes que ganham um tratamento dedicado (graficos,
+    tabelas customizadas); as demais caem no renderizador generico."""
+    if key == "email_clients" and isinstance(value, list):
+        return _render_email_clients(value)
+    if key == "storage" and isinstance(value, dict):
+        return _render_storage_charts(value) + _render_section_body(value)
+    if key == "open_ports" and isinstance(value, list):
+        return _render_ports_charts(value) + _render_section_body(value)
+    return _render_section_body(value)
 
 
 # ============================================================
@@ -310,6 +478,27 @@ small { color:var(--dim); font-size:11px; }
 .pill.yes { background:rgba(72,216,144,.15); color:var(--success); }
 .pill.no { background:rgba(232,80,80,.15); color:var(--danger); }
 .dim { color:var(--dim); }
+.chart { margin:10px 0 20px; }
+.chart-title {
+  font-size:12px; font-weight:600; color:var(--text); text-transform:uppercase;
+  letter-spacing:.04em; margin-bottom:10px;
+}
+.chart-legend { display:flex; gap:16px; margin-bottom:8px; flex-wrap:wrap; }
+.legend-item { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); }
+.legend-swatch { width:10px; height:10px; border-radius:2px; display:inline-block; flex-shrink:0; }
+.chart-body { display:flex; flex-direction:column; gap:6px; }
+.bar-row { display:flex; align-items:center; gap:10px; }
+.bar-label {
+  width:190px; flex-shrink:0; font-size:12px; color:var(--dim);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.bar-track { flex:1; height:14px; background:var(--card); border-radius:0 4px 4px 0; overflow:hidden; }
+.bar-fill { height:100%; min-width:2px; border-radius:0 4px 4px 0; }
+.bar-value {
+  width:76px; flex-shrink:0; text-align:right; font-size:12px; color:var(--text);
+  font-variant-numeric:tabular-nums;
+}
+.chart-note { font-size:11px; color:var(--dim); margin-top:8px; }
 ::-webkit-scrollbar { width:10px; height:10px; }
 ::-webkit-scrollbar-track { background:var(--panel); }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
@@ -430,7 +619,7 @@ def render_report(data, brand="Sek Optimize - System Analyzer"):
     for key in sections:
         panels.append(
             f'<section id="{key}" class="panel">'
-            f"<h2>{_esc(_title(key))}</h2>{_render_section_body(data[key])}"
+            f"<h2>{_esc(_title(key))}</h2>{_render_section(key, data[key])}"
             "</section>"
         )
 
@@ -496,7 +685,7 @@ def render_consolidated(entries, brand="Sek Optimize - Relatorio Consolidado"):
             panels.append(
                 f'<section id="m{i}-{key}" class="panel">'
                 f"<h2>{_esc(hostname)} &mdash; {_esc(_title(key))}</h2>"
-                f"{_render_section_body(data[key])}"
+                f"{_render_section(key, data[key])}"
                 "</section>"
             )
 

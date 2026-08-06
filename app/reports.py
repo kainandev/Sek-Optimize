@@ -2,9 +2,12 @@ import threading
 import json
 import urllib.request
 import urllib.error
+from pathlib import Path
+from datetime import datetime
 
 from app.app import App
 from util.schemes import SchemeBuilder
+from util.report_html import render_report, render_consolidated
 
 
 class Reports(App):
@@ -40,6 +43,64 @@ class Reports(App):
 
             except PermissionError:
                 self.log_error(f"Permissao negada ao gravar: {path}")
+            except Exception as e:
+                self.log_error(str(e))
+            finally:
+                self._progress_stop()
+                self.log_sep()
+                self.log("")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ============================================================
+    # CONVERTER JSON(s) EXISTENTE(S) PARA HTML
+    # source_path: caminho de um arquivo .json ou de uma pasta
+    # is_folder:   True -> gera um HTML consolidado com todos os
+    #              .json da pasta; False -> converte um unico arquivo
+    # ============================================================
+    def convert_json_to_html(self, source_path, is_folder):
+        def _run():
+            self._progress_start("Convertendo JSON para HTML...")
+            self.log_title("Converter JSON para HTML")
+            try:
+                if is_folder:
+                    folder  = Path(source_path)
+                    entries = []
+
+                    for file in sorted(folder.glob("*.json")):
+                        try:
+                            with open(file, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            entries.append((file.stem, data))
+                            self.log_info(f"Lido: {file.name}")
+                        except Exception as e:
+                            self.log_warn(f"Ignorado {file.name}: {e}")
+
+                    if not entries:
+                        self.log_error("Nenhum JSON valido encontrado na pasta.")
+                        return
+
+                    html      = render_consolidated(entries)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    out_path  = folder / f"relatorio_consolidado_{timestamp}.html"
+                    out_path.write_text(html, encoding="utf-8")
+                    self.log_ok(
+                        f"HTML consolidado gerado ({len(entries)} maquina(s)): {out_path}"
+                    )
+                else:
+                    json_path = Path(source_path)
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    html      = render_report(data)
+                    hostname  = data.get("system", {}).get("hostname", "relatorio")
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    out_path  = json_path.parent / f"{hostname}_{timestamp}.html"
+                    out_path.write_text(html, encoding="utf-8")
+                    self.log_ok(f"HTML gerado: {out_path}")
+
+            except PermissionError:
+                self.log_error(f"Permissao negada ao gravar em: {source_path}")
             except Exception as e:
                 self.log_error(str(e))
             finally:
