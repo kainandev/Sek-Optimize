@@ -2,6 +2,45 @@ from config import *
 from app.app import App
 from util.schemes import SchemeBuilder
 
+# Codigos de erro do Gerenciador de Dispositivos (Win32_PnPEntity.ConfigManagerErrorCode).
+# Tabela oficial da Microsoft (CM_PROB_*), traduzida.
+_PNP_ERROR_CODES = {
+    1:  "Dispositivo nao configurado corretamente",
+    3:  "Driver corrompido ou memoria insuficiente",
+    9:  "Dados de configuracao da placa invalidos (barramento incorreto)",
+    10: "Dispositivo nao pode iniciar",
+    12: "Recursos livres insuficientes",
+    14: "Requer reinicializacao do computador para funcionar",
+    16: "Nao foi possivel identificar todos os recursos do dispositivo",
+    18: "Reinstalar os drivers deste dispositivo",
+    19: "Registro do Windows corrompido para este dispositivo",
+    21: "Sistema esta removendo o dispositivo (aguarde)",
+    22: "Dispositivo desativado pelo usuario",
+    24: "Dispositivo ausente, com defeito ou desconectado",
+    28: "Drivers deste dispositivo nao instalados",
+    29: "Dispositivo desativado pelo firmware (BIOS/UEFI)",
+    31: "Dispositivo nao esta funcionando corretamente (driver incompleto/config)",
+    32: "Driver desativado (tipo de inicializacao desabilitado)",
+    33: "Windows nao consegue determinar quais recursos o dispositivo precisa",
+    34: "Windows nao consegue determinar as configuracoes do dispositivo",
+    35: "Firmware do sistema nao inclui informacoes suficientes p/ configurar",
+    36: "Dispositivo requer IRQ que nao pode ser atribuido",
+    37: "Driver retornou falha na inicializacao",
+    38: "Driver anterior ainda esta carregado na memoria",
+    39: "Driver ausente ou corrompido",
+    40: "Registro do servico do driver corrompido",
+    41: "Driver carregado, mas o dispositivo nao foi encontrado",
+    42: "Dispositivo duplicado detectado",
+    43: "Windows parou o dispositivo por ele reportar problemas",
+    44: "Aplicativo ou servico desligou o dispositivo",
+    45: "Dispositivo removido fisicamente, mas ainda instalado no sistema",
+    46: "Dispositivo indisponivel (sistema esta desligando)",
+    47: "Dispositivo preparado para remocao segura, mas ainda nao removido",
+    48: "Driver bloqueado por incompatibilidade conhecida",
+    49: "Sistema nao pode mais adicionar dispositivos (arvore de registro cheia)",
+    52: "Windows nao pode verificar a assinatura digital do driver",
+}
+
 
 class Optmize(App):
     """Otimizacoes de desempenho e configuracoes do sistema."""
@@ -82,6 +121,45 @@ class Optmize(App):
 
     def disk_info(self):
         self.run_command("Informacoes do disco", COMMANDS["disk_info"])
+
+    def list_scheduled_tasks(self):
+        self.run_command("Tarefas Agendadas", COMMANDS["list_scheduled_tasks"])
+
+    def check_activation_status(self):
+        self.run_command("Status de Ativacao do Windows", COMMANDS["check_activation_status"])
+
+    def check_driver_errors(self):
+        self.log_title("Drivers com Erro")
+        self._progress_start("Consultando dispositivos (WMI)...")
+        try:
+            pythoncom.CoInitialize()
+            c = wmi.WMI()
+            problems = [
+                d for d in c.Win32_PnPEntity()
+                if (getattr(d, "ConfigManagerErrorCode", 0) or 0) != 0
+            ]
+
+            if not problems:
+                self.log_ok("Nenhum dispositivo com erro de driver detectado.")
+
+            for d in problems:
+                code = d.ConfigManagerErrorCode
+                self.log(f"[{d.Name or d.DeviceID or 'Dispositivo desconhecido'}]")
+                self.log(f"  Codigo de erro : {code} - {_PNP_ERROR_CODES.get(code, 'Codigo desconhecido')}")
+                self.log(f"  Status         : {d.Status or 'N/A'}")
+                self.log(f"  Device ID      : {d.DeviceID or 'N/A'}")
+                self.log("")
+        except Exception as e:
+            self.log_error(str(e))
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+            self._progress_stop()
+            self.log_sep()
+            self.log_ok("Verificacao concluida.")
+            self.log("")
 
     def check_disk_surface(self):
         self.run_command("Verificando superficie do disco", COMMANDS["check_disk_surface"])

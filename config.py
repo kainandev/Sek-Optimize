@@ -174,6 +174,13 @@ COMMANDS = {
         r' | Select-Object -First 20'
         r' | Format-Table HotFixID,Description,InstalledOn -AutoSize"'
     ),
+    "list_scheduled_tasks": (
+        "schtasks /query /fo TABLE"
+    ),
+    "check_activation_status": (
+        r'cscript //nologo %windir%\system32\slmgr.vbs /dlv'
+        r' & cscript //nologo %windir%\system32\slmgr.vbs /xpr'
+    ),
 
     # --- Rede ---
     "flush_dns": (
@@ -237,6 +244,14 @@ COMMANDS = {
         r' | Select-Object PSChildName, Version'
         r' | Format-Table -AutoSize"'
     ),
+    "create_restore_point": (
+        r'powershell -NoProfile -Command "'
+        r'Enable-ComputerRestore -Drive $env:SystemDrive;'
+        r' Checkpoint-Computer -Description \"Sek Optimize\" -RestorePointType MODIFY_SETTINGS"'
+    ),
+    "cleanup_winsxs": (
+        "dism /online /cleanup-image /startcomponentcleanup"
+    ),
 
     # --- Privacidade ---
     "disable_telemetry": (
@@ -282,6 +297,18 @@ COMMANDS = {
     # --- Seguranca ---
     "defender_quick_scan": (
         r'"C:\Program Files\Windows Defender\MpCmdRun.exe" -Scan -ScanType 1'
+    ),
+    "check_bitlocker_status": (
+        "manage-bde -status"
+    ),
+    "check_firewall_status": (
+        "netsh advfirewall show allprofiles"
+    ),
+    "check_tpm_secureboot": (
+        r'powershell -NoProfile -Command "'
+        r'Get-Tpm | Format-List *;'
+        r' try { \"Secure Boot Enabled: \" + (Confirm-SecureBootUEFI) }'
+        r' catch { \"Secure Boot: nao suportado (Legacy BIOS ou nao aplicavel)\" }"'
     ),
 }
 
@@ -769,6 +796,85 @@ ACTIONS = {
         "tab": "Ativacao",
         "danger": True,
         "handler": "run_massgrave",
+    },
+    65: {
+        "label": "Status de Ativacao do Windows",
+        "description": "Mostra status detalhado e prazo de ativacao da licenca (slmgr /dlv + /xpr).",
+        "tab": "Ativacao",
+        "danger": False,
+        "handler": "check_activation_status",
+    },
+
+    # --- Diagnostico avancado (nova leva) ---
+    66: {
+        "label": "Tarefas Agendadas",
+        "description": "Lista todas as tarefas agendadas do Windows (schtasks) - util para detectar persistencia indesejada.",
+        "tab": "Sistema",
+        "danger": False,
+        "handler": "list_scheduled_tasks",
+    },
+    67: {
+        "label": "Drivers com Erro",
+        "description": "Lista apenas os dispositivos com erro no Gerenciador de Dispositivos, com o codigo e o significado.",
+        "tab": "Sistema",
+        "danger": False,
+        "handler": "check_driver_errors",
+    },
+    68: {
+        "label": "Criar Ponto de Restauracao",
+        "description": "Cria um ponto de restauracao do sistema antes de mudancas maiores. Windows limita a 1 a cada 24h.",
+        "tab": "Manutencao",
+        "danger": False,
+        "handler": "create_restore_point",
+    },
+    69: {
+        "label": "Limpeza do WinSxS",
+        "description": "Remove versoes superadas de componentes do Windows (DISM StartComponentCleanup), liberando espaco.",
+        "tab": "Manutencao",
+        "danger": True,
+        "handler": "cleanup_winsxs",
+    },
+    70: {
+        "label": "Teste de Velocidade Real (Download/Upload)",
+        "description": "Mede a velocidade real da internet (nao so latencia DNS), baixando e enviando dados de teste.",
+        "tab": "Rede",
+        "danger": False,
+        "handler": "speed_test",
+    },
+    71: {
+        "label": "Redes Wi-Fi Salvas e Senhas",
+        "description": "Lista todos os perfis de Wi-Fi salvos no Windows e suas senhas em texto claro.",
+        "tab": "Rede",
+        "danger": False,
+        "handler": "list_wifi_passwords",
+    },
+    72: {
+        "label": "Status do BitLocker",
+        "description": "Mostra o status de criptografia (BitLocker) de cada unidade.",
+        "tab": "Seguranca",
+        "danger": False,
+        "handler": "check_bitlocker_status",
+    },
+    73: {
+        "label": "Status do Firewall",
+        "description": "Mostra os perfis do Firewall do Windows (Dominio/Privado/Publico) e se estao ativos.",
+        "tab": "Seguranca",
+        "danger": False,
+        "handler": "check_firewall_status",
+    },
+    74: {
+        "label": "TPM / Secure Boot",
+        "description": "Verifica presenca/versao do TPM e se o Secure Boot esta ativo - relevante para elegibilidade ao Windows 11.",
+        "tab": "Seguranca",
+        "danger": False,
+        "handler": "check_tpm_secureboot",
+    },
+    75: {
+        "label": "Reinicializacoes Inesperadas",
+        "description": "Conta quedas/reinicializacoes inesperadas (kernel power loss) nos ultimos 30 dias, via Event Log.",
+        "tab": "Monitor",
+        "danger": False,
+        "handler": "unexpected_reboots",
     },
 }
 

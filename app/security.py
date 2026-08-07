@@ -132,3 +132,12 @@ class Security(App):
             self.log_sep()
             self.log_ok("Exportacao concluida.")
             self.log("")
+
+    def check_bitlocker_status(self):
+        self.run_command("Status do BitLocker", COMMANDS["check_bitlocker_status"])
+
+    def check_firewall_status(self):
+        self.run_command("Status do Firewall", COMMANDS["check_firewall_status"])
+
+    def check_tpm_secureboot(self):
+        self.run_command("TPM / Secure Boot", COMMANDS["check_tpm_secureboot"])

@@ -44,3 +44,14 @@ class Maintenance(App):
     def check_disk_surface(self):
         self.log_warn("Verificacao fisica pode demorar. O sistema pode precisar reiniciar.")
         self.run_command("Verificar Superficie do Disco", COMMANDS["check_disk_surface"])
+
+    def create_restore_point(self):
+        self.log_warn(
+            "O Windows limita a criacao de pontos de restauracao a 1 a cada 24h "
+            "por padrao - se nao aparecer nada novo, pode ser esse limite."
+        )
+        self.run_command("Criar Ponto de Restauracao", COMMANDS["create_restore_point"])
+
+    def cleanup_winsxs(self):
+        self.log_warn("Pode demorar varios minutos. Remove versoes antigas de componentes do Windows.")
+        self.run_command("Limpeza do WinSxS", COMMANDS["cleanup_winsxs"])

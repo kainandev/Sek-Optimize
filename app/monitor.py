@@ -1,5 +1,12 @@
 from config import *
 from app.app import App
+from datetime import timedelta
+
+try:
+    import win32evtlog
+    _HAS_EVTLOG = True
+except ImportError:
+    _HAS_EVTLOG = False
 
 
 class Monitor(App):
@@ -186,4 +193,56 @@ class Monitor(App):
             self._progress_stop()
             self.log_sep()
             self.log_ok("Leitura concluida.")
+            self.log("")
+
+    # ============================================================
+    # REINICIALIZACOES INESPERADAS (Event Log, System, 30 dias)
+    # EventID 41  = Kernel-Power, sistema reiniciou sem desligamento limpo
+    # EventID 6008 = "o desligamento anterior foi inesperado" (EventLog)
+    # ============================================================
+    def unexpected_reboots(self):
+        self.log_title("Reinicializacoes Inesperadas (30 dias)")
+        self._progress_start("Consultando Event Log (System)...")
+
+        if not _HAS_EVTLOG:
+            self.log_error("pywin32 (win32evtlog) nao disponivel.")
+            self._progress_stop()
+            self.log("")
+            return
+
+        try:
+            cutoff     = datetime.now() - timedelta(days=30)
+            wanted_ids = {41, 6008}
+            found      = []
+
+            hand  = win32evtlog.OpenEventLog(None, "System")
+            flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+            stop  = False
+            while not stop:
+                records = win32evtlog.ReadEventLog(hand, flags, 0)
+                if not records:
+                    break
+                for ev in records:
+                    if ev.TimeGenerated < cutoff:
+                        stop = True
+                        break
+                    eid = ev.EventID & 0xFFFF
+                    if eid in wanted_ids:
+                        found.append((ev.TimeGenerated, eid, ev.SourceName))
+            win32evtlog.CloseEventLog(hand)
+
+            if not found:
+                self.log_ok("Nenhuma reinicializacao inesperada nos ultimos 30 dias.")
+            else:
+                self.log_warn(f"{len(found)} reinicializacao(oes) inesperada(s) nos ultimos 30 dias:")
+                for ts, eid, source in found:
+                    motivo = "Kernel-Power (queda abrupta)" if eid == 41 else "Desligamento anterior inesperado"
+                    self.log(f"  {ts.strftime('%Y-%m-%d %H:%M:%S')}  [ID {eid}]  {motivo}  ({source})")
+
+        except Exception as e:
+            self.log_error(str(e))
+        finally:
+            self._progress_stop()
+            self.log_sep()
+            self.log_ok("Verificacao concluida.")
             self.log("")
