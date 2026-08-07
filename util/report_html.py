@@ -37,6 +37,14 @@ C_DANGER  = "#e85050"
 # acima para nao ser confundida com um sinal de severidade.
 C_CAT2 = "#9085e9"
 
+# Paleta categorica para pizzas com N series (ex.: fabricantes, tipos de
+# memoria) - nunca inclui as cores de severidade (verde/laranja/vermelho),
+# que ficam reservadas a graficos de uso/status.
+C_CATEGORICAL = [
+    C_ACCENT, C_CAT2, "#2fb8c6", "#e2739d",
+    "#d4b23c", "#6f7bd6", "#8891b0", "#3f9fe0",
+]
+
 SECTION_TITLES = {
     "system":             "Sistema",
     "bios":               "BIOS",
@@ -44,6 +52,7 @@ SECTION_TITLES = {
     "cpu":                "CPU",
     "memory":             "Memoria RAM",
     "storage":             "Armazenamento",
+    "disk_health":         "Saude dos Discos",
     "gpu":                "GPU",
     "network":            "Rede",
     "open_ports":         "Portas Abertas",
@@ -119,7 +128,7 @@ def _status_color(pct):
     return C_DANGER
 
 
-def _progress_bar(pct):
+def _progress_bar(pct, label="uso"):
     try:
         pct_f = float(pct)
     except (TypeError, ValueError):
@@ -129,7 +138,7 @@ def _progress_bar(pct):
     return (
         f"<div class='progress'><div class='progress-bar' "
         f"style='width:{pct_f}%;background:{color}'></div></div>"
-        f"<small>{_esc(pct)}% uso</small>"
+        f"<small>{_esc(pct)}% {_esc(label)}</small>"
     )
 
 
@@ -190,6 +199,81 @@ def _bar_chart(title, rows, unit="", legend=None, max_value=None, note=None):
     )
 
 
+# ============================================================
+# GRAFICOS DE PIZZA (donut via CSS conic-gradient, sem dependencias)
+# ============================================================
+def _pie_chart(title, slices, unit="", note=None, center_label=None):
+    """
+    slices: lista de tuplas (label, valor, cor).
+    center_label: texto exibido no centro do donut (ex.: total). Se
+    omitido, usa a soma dos valores.
+    """
+    numeric = []
+    for label, value, color in slices:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            v = 0.0
+        numeric.append(max(0.0, v))
+
+    total = sum(numeric)
+    if total <= 0:
+        return ""
+
+    stops = []
+    cursor = 0.0
+    for (label, value, color), value_f in zip(slices, numeric):
+        start = (cursor / total) * 100
+        cursor += value_f
+        end = (cursor / total) * 100
+        stops.append(f"{color} {start:.2f}% {end:.2f}%")
+
+    gradient = ", ".join(stops)
+
+    legend_items = ""
+    for (label, value, color), value_f in zip(slices, numeric):
+        pct = (value_f / total) * 100
+        legend_items += (
+            "<div class='pie-legend-item'>"
+            f"<span class='legend-swatch' style='background:{color}'></span>"
+            f"<span class='pie-legend-label'>{_esc(label)}</span>"
+            f"<span class='pie-legend-value'>{_esc(value)}{_esc(unit)} "
+            f"<small>({pct:.1f}%)</small></span>"
+            "</div>"
+        )
+
+    center = _esc(center_label) if center_label is not None else _esc(round(total, 2))
+    note_html = f"<p class='chart-note'>{_esc(note)}</p>" if note else ""
+
+    return (
+        "<div class='pie-chart'>"
+        f"<div class='chart-title'>{_esc(title)}</div>"
+        "<div class='pie-body'>"
+        f"<div class='pie' style='background:conic-gradient({gradient})'>"
+        f"<div class='pie-hole'><span>{center}</span></div>"
+        "</div>"
+        f"<div class='pie-legend'>{legend_items}</div>"
+        "</div>"
+        f"{note_html}"
+        "</div>"
+    )
+
+
+def _top_n_with_others(counts, n=6, others_label="Outros", others_color=C_DIM):
+    """Recebe {label: valor} e devolve as N maiores fatias + uma fatia
+    'Outros' agregando o restante, coloridas pela paleta categorica."""
+    ordered = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)
+    top     = ordered[:n]
+    rest    = ordered[n:]
+    slices  = [
+        (label, value, C_CATEGORICAL[i % len(C_CATEGORICAL)])
+        for i, (label, value) in enumerate(top)
+    ]
+    if rest:
+        slices.append((others_label, sum(v for _, v in rest), others_color))
+    return slices
+
+
 def _render_storage_charts(storage):
     if not isinstance(storage, dict):
         return ""
@@ -198,6 +282,22 @@ def _render_storage_charts(storage):
     html    = ""
 
     if volumes:
+        total_used = sum(float(v.get("used_gb") or 0) for v in volumes)
+        total_free = sum(float(v.get("free_gb") or 0) for v in volumes)
+        total_gb   = total_used + total_free
+        if total_gb > 0:
+            used_pct = (total_used / total_gb) * 100
+            html += _pie_chart(
+                "Uso Total de Armazenamento",
+                [
+                    ("Usado", round(total_used, 2), _status_color(used_pct)),
+                    ("Livre", round(total_free, 2), C_BORDER),
+                ],
+                unit=" GB",
+                center_label=f"{used_pct:.0f}%",
+                note="Soma de todos os volumes montados.",
+            )
+
         rows = [
             (v.get("mount_point", "?"), v.get("usage_pct", 0), _status_color(v.get("usage_pct")))
             for v in volumes
@@ -217,6 +317,93 @@ def _render_storage_charts(storage):
     return html
 
 
+def _render_memory_charts(memory):
+    if not isinstance(memory, dict):
+        return ""
+    html = ""
+
+    total_gb = memory.get("total_gb")
+    used_gb  = memory.get("used_gb")
+    avail_gb = memory.get("available_gb")
+    if total_gb and used_gb is not None and avail_gb is not None:
+        used_pct = memory.get("usage_pct") or (used_gb / total_gb * 100 if total_gb else 0)
+        html += _pie_chart(
+            "Composicao da Memoria",
+            [
+                ("Em uso",    used_gb,  _status_color(used_pct)),
+                ("Disponivel", avail_gb, C_BORDER),
+            ],
+            unit=" GB",
+            center_label=f"{used_pct:.0f}%",
+        )
+
+    modules = memory.get("modules") or []
+    if len(modules) > 1:
+        type_counts = {}
+        for m in modules:
+            t = m.get("type") or "Desconhecido"
+            type_counts[t] = type_counts.get(t, 0) + 1
+        if len(type_counts) > 1:
+            slices = [
+                (t, count, C_CATEGORICAL[i % len(C_CATEGORICAL)])
+                for i, (t, count) in enumerate(type_counts.items())
+            ]
+            html += _pie_chart(
+                "Modulos por Tipo", slices, unit=" modulo(s)",
+                center_label=str(len(modules)),
+            )
+
+    return html
+
+
+_DISK_HEALTH_PILL = {"Saudavel": "yes", "Aviso": "warn", "Nao Saudavel": "no"}
+
+
+def _render_disk_health(disks):
+    if not disks:
+        return "<p class='empty'>Nenhum disco fisico detectado.</p>"
+
+    wear_rows = []
+    cards = ""
+    for d in disks:
+        if not isinstance(d, dict):
+            continue
+        status   = d.get("health_status", "Desconhecido")
+        pill_cls = _DISK_HEALTH_PILL.get(status, "no")
+        wear     = d.get("wear_pct")
+        poh      = d.get("power_on_hours")
+        poh_days = d.get("power_on_days")
+        temp     = d.get("temperature_c")
+        note     = d.get("reliability_unavailable")
+
+        cards += "<div class='card'>"
+        cards += f"<h3>{_esc(d.get('model', 'Disco'))}</h3>"
+        cards += f"<p><b>Status:</b> <span class='pill {pill_cls}'>{_esc(status)}</span></p>"
+        cards += f"<p><b>Tipo:</b> {_esc(d.get('media_type', 'N/A'))} &middot; {_esc(d.get('bus_type', 'N/A'))}</p>"
+        cards += f"<p><b>Capacidade:</b> {_esc(d.get('size_gb', 'N/A'))} GB</p>"
+        if wear is not None:
+            cards += f"<p><b>Desgaste (vida usada):</b> {_esc(wear)}%</p>"
+            cards += _progress_bar(wear, label="desgaste")
+            wear_rows.append((d.get("model", "?"), wear, _status_color(wear)))
+        if poh is not None:
+            dias = f" (&asymp;{_esc(poh_days)} dias)" if poh_days is not None else ""
+            cards += f"<p><b>Horas ligado:</b> {_esc(poh)}h{dias}</p>"
+        if temp is not None:
+            cards += f"<p><b>Temperatura:</b> {_esc(temp)}&deg;C</p>"
+        if note:
+            cards += f"<p class='dim'>{_esc(note)}</p>"
+        cards += "</div>"
+
+    html = ""
+    if wear_rows:
+        html += _bar_chart(
+            "Desgaste dos Discos (SSD)", wear_rows, unit="%", max_value=100,
+            note="Percentual estimado de vida util consumida (SMART/Storage Reliability).",
+        )
+    html += f"<div class='grid'>{cards}</div>"
+    return html
+
+
 def _render_ports_charts(ports):
     if not ports:
         return ""
@@ -224,10 +411,11 @@ def _render_ports_charts(ports):
     tcp_count = sum(1 for p in ports if str(p.get("protocol", "")).upper() == "TCP")
     udp_count = sum(1 for p in ports if str(p.get("protocol", "")).upper() == "UDP")
 
-    html = _bar_chart(
+    html = _pie_chart(
         "Portas por Protocolo",
         [("TCP", tcp_count, C_ACCENT), ("UDP", udp_count, C_CAT2)],
-        legend=[("TCP", C_ACCENT), ("UDP", C_CAT2)],
+        unit=" porta(s)",
+        center_label=str(tcp_count + udp_count),
     )
 
     counts = {}
@@ -240,6 +428,42 @@ def _render_ports_charts(ports):
         html += _bar_chart("Processos com Mais Portas Abertas", rows)
 
     return html
+
+
+def _render_installed_programs_charts(programs):
+    if not programs:
+        return ""
+    counts = {}
+    for p in programs:
+        vendor = (p.get("vendor") or "Desconhecido").strip() or "Desconhecido"
+        counts[vendor] = counts.get(vendor, 0) + 1
+    if len(counts) < 2:
+        return ""
+    slices = _top_n_with_others(counts, n=7)
+    return _pie_chart(
+        "Programas por Fabricante", slices, unit=" programa(s)",
+        center_label=str(len(programs)),
+    )
+
+
+def _render_local_users_charts(users):
+    if not users:
+        return ""
+    enabled  = sum(1 for u in users if not u.get("disabled"))
+    disabled = sum(1 for u in users if u.get("disabled"))
+    locked   = sum(1 for u in users if u.get("locked_out"))
+
+    slices = [("Ativos", enabled, C_SUCCESS)]
+    if disabled:
+        slices.append(("Desativados", disabled, C_DIM))
+    if locked:
+        slices.append(("Bloqueados", locked, C_DANGER))
+    if len(slices) < 2:
+        return ""
+    return _pie_chart(
+        "Usuarios por Status", slices, unit=" usuario(s)",
+        center_label=str(len(users)),
+    )
 
 
 def _render_email_clients(clients):
@@ -281,8 +505,16 @@ def _render_section(key, value):
         return _render_email_clients(value)
     if key == "storage" and isinstance(value, dict):
         return _render_storage_charts(value) + _render_section_body(value)
+    if key == "disk_health" and isinstance(value, list):
+        return _render_disk_health(value)
     if key == "open_ports" and isinstance(value, list):
         return _render_ports_charts(value) + _render_section_body(value)
+    if key == "memory" and isinstance(value, dict):
+        return _render_memory_charts(value) + _render_section_body(value)
+    if key == "installed_programs" and isinstance(value, list):
+        return _render_installed_programs_charts(value) + _render_section_body(value)
+    if key == "local_users" and isinstance(value, list):
+        return _render_local_users_charts(value) + _render_section_body(value)
     return _render_section_body(value)
 
 
@@ -361,10 +593,40 @@ def _overview_html(data):
     vol0    = volumes[0] if volumes else {}
     drives  = stor.get("drives") or []
     drive0  = drives[0] if drives else {}
+    health  = data.get("disk_health") or []
+    health0 = health[0] if health else {}
 
     cpu_pct  = runtime.get("cpu_usage_pct", 0)
     ram_pct  = memd.get("usage_pct", 0)
     disk_pct = vol0.get("usage_pct", 0)
+
+    charts_html = ""
+    total_gb = memd.get("total_gb")
+    used_gb  = memd.get("used_gb")
+    avail_gb = memd.get("available_gb")
+    if total_gb and used_gb is not None and avail_gb is not None:
+        charts_html += _pie_chart(
+            "Composicao da Memoria",
+            [
+                ("Em uso",     used_gb,  _status_color(ram_pct)),
+                ("Disponivel", avail_gb, C_BORDER),
+            ],
+            unit=" GB", center_label=f"{float(ram_pct):.0f}%",
+        )
+
+    total_used = sum(float(v.get("used_gb") or 0) for v in volumes)
+    total_free = sum(float(v.get("free_gb") or 0) for v in volumes)
+    total_disk = total_used + total_free
+    if total_disk > 0:
+        used_pct = (total_used / total_disk) * 100
+        charts_html += _pie_chart(
+            "Uso Total de Armazenamento",
+            [
+                ("Usado", round(total_used, 2), _status_color(used_pct)),
+                ("Livre", round(total_free, 2), C_BORDER),
+            ],
+            unit=" GB", center_label=f"{used_pct:.0f}%",
+        )
 
     return f"""
     <div class="grid">
@@ -389,8 +651,13 @@ def _overview_html(data):
             <h3>Disco</h3>
             <p>{_esc(drive0.get('model', 'N/A'))}</p>
             {_progress_bar(disk_pct)}
+            {(
+                f"<p><b>Saude:</b> <span class='pill {_DISK_HEALTH_PILL.get(health0.get('health_status'), 'no')}'>"
+                f"{_esc(health0.get('health_status'))}</span></p>"
+            ) if health0 else ""}
         </div>
     </div>
+    <div class="pie-row">{charts_html}</div>
     """
 
 
@@ -477,6 +744,7 @@ small { color:var(--dim); font-size:11px; }
 .pill { padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
 .pill.yes { background:rgba(72,216,144,.15); color:var(--success); }
 .pill.no { background:rgba(232,80,80,.15); color:var(--danger); }
+.pill.warn { background:rgba(240,160,64,.15); color:var(--warning); }
 .dim { color:var(--dim); }
 .chart { margin:10px 0 20px; }
 .chart-title {
@@ -499,6 +767,24 @@ small { color:var(--dim); font-size:11px; }
   font-variant-numeric:tabular-nums;
 }
 .chart-note { font-size:11px; color:var(--dim); margin-top:8px; }
+.pie-row { display:flex; gap:32px; flex-wrap:wrap; margin-top:6px; }
+.pie-row .pie-chart { margin:10px 0 0; flex:1; min-width:260px; }
+.pie-chart { margin:10px 0 20px; }
+.pie-body { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+.pie {
+  width:130px; height:130px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+.pie-hole {
+  width:76px; height:76px; border-radius:50%; background:var(--card2);
+  border:1px solid var(--border); display:flex; align-items:center; justify-content:center;
+}
+.pie-hole span { font-size:14px; font-weight:700; color:var(--text); }
+.pie-legend { display:flex; flex-direction:column; gap:6px; }
+.pie-legend-item { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text); }
+.pie-legend-label { color:var(--dim); min-width:110px; }
+.pie-legend-value { font-variant-numeric:tabular-nums; }
+.pie-legend-value small { color:var(--dim); }
 ::-webkit-scrollbar { width:10px; height:10px; }
 ::-webkit-scrollbar-track { background:var(--panel); }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }

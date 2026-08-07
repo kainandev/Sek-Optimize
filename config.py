@@ -145,9 +145,6 @@ COMMANDS = {
     "kill_background_tasks": (
         r'taskkill /f /im OneDrive.exe 2>nul & taskkill /f /im Teams.exe 2>nul'
     ),
-    "check_disk_health": (
-        "wmic diskdrive get model,status,interfacetype,mediatype"
-    ),
     "disk_info": (
         "wmic diskdrive get model,serialnumber,size,mediatype"
     ),
@@ -455,7 +452,7 @@ ACTIONS = {
     },
     23: {
         "label": "Saude do Disco (SMART)",
-        "description": "Verifica o status SMART do disco via WMIC.",
+        "description": "Desgaste, horas ligado, temperatura e status de saude via WMI Storage Reliability Counters.",
         "tab": "Sistema",
         "danger": False,
         "handler": "check_disk_health",

@@ -34,7 +34,7 @@ except ImportError:
 
 
 # Version bumped when new top-level keys are added to the schema.
-SCHEMA_VERSION = "0.3"
+SCHEMA_VERSION = "0.4"
 
 # Readable labels for WMI memory type codes (Win32_PhysicalMemory.MemoryType)
 _RAM_TYPE = {
@@ -54,6 +54,19 @@ _RAM_FORM = {
     10: "PGA", 11: "RIMM", 12: "SODIMM", 13: "SRIMM", 14: "SMD",
     15: "SSMP", 16: "QFP", 17: "TQFP", 18: "SOIC", 19: "LCC",
     20: "PLCC", 21: "BGA", 22: "FPBGA", 23: "LGA",
+}
+
+# Readable labels for MSFT_PhysicalDisk.MediaType (root\Microsoft\Windows\Storage)
+_DISK_MEDIA_TYPE = {0: "Nao especificado", 3: "HDD", 4: "SSD", 5: "SCM"}
+
+# Readable labels for MSFT_PhysicalDisk.HealthStatus
+_DISK_HEALTH_STATUS = {0: "Saudavel", 1: "Aviso", 2: "Nao Saudavel", 5: "Desconhecido"}
+
+# Readable labels for MSFT_PhysicalDisk.BusType (subset of STORAGE_BUS_TYPE
+# actually seen on consumer hardware; anything else falls back to "Outro")
+_DISK_BUS_TYPE = {
+    1: "SCSI", 2: "ATAPI", 3: "ATA", 4: "IEEE1394", 7: "USB",
+    8: "RAID", 9: "iSCSI", 10: "SAS", 11: "SATA", 17: "NVMe",
 }
 
 # Registry hives searched for installed programs
@@ -136,10 +149,10 @@ class SchemeBuilder:
     def collect(self):
         """
         Returns a fully structured dictionary with machine inventory.
-        Sections: system, bios, motherboard, cpu, memory, storage, gpu,
-                  network, open_ports, audio, software, installed_programs,
-                  startup_programs, local_users, antivirus, email_clients,
-                  runtime.
+        Sections: system, bios, motherboard, cpu, memory, storage,
+                  disk_health, gpu, network, open_ports, audio, software,
+                  installed_programs, startup_programs, local_users,
+                  antivirus, email_clients, runtime.
         """
         return {
             "schema_version":     SCHEMA_VERSION,
@@ -150,6 +163,7 @@ class SchemeBuilder:
             "cpu":                self._collect_cpu(),
             "memory":             self._collect_memory(),
             "storage":            self._collect_storage(),
+            "disk_health":        self._collect_disk_health(),
             "gpu":                self._collect_gpu(),
             "network":            self._collect_network(),
             "open_ports":         self._collect_open_ports(),
@@ -453,6 +467,74 @@ class SchemeBuilder:
                     pass
 
         return {"drives": drives, "volumes": volumes}
+
+    # ============================================================
+    # DISK HEALTH (SMART-equivalent via Storage Reliability Counters)
+    #
+    # MSFT_PhysicalDisk (root\Microsoft\Windows\Storage) gives basic
+    # health/media info without elevation. MSFT_StorageReliabilityCounter
+    # adds wear %, power-on hours and temperature but requires the process
+    # to be running elevated - Sek Optimize always relaunches itself as
+    # administrator (see main.py), so this is expected to succeed there;
+    # it degrades gracefully (per-disk note) when it doesn't.
+    # ============================================================
+    def _collect_disk_health(self):
+        disks = []
+        if not _HAS_WMI:
+            return disks
+        try:
+            pythoncom.CoInitialize()
+            c = wmi.WMI(namespace=r"root\Microsoft\Windows\Storage")
+
+            reliability = {}
+            try:
+                for r in c.MSFT_StorageReliabilityCounter():
+                    reliability[str(r.DeviceId)] = r
+            except Exception:
+                pass
+
+            for d in c.MSFT_PhysicalDisk():
+                device_id = str(d.DeviceId)
+                entry = {
+                    "device_id":     device_id,
+                    "model":         str(d.FriendlyName or "N/A"),
+                    "serial_number": str(getattr(d, "SerialNumber", "") or "N/A"),
+                    "media_type":    _DISK_MEDIA_TYPE.get(int(d.MediaType or 0), "Desconhecido"),
+                    "bus_type":      _DISK_BUS_TYPE.get(int(getattr(d, "BusType", 0) or 0), "Outro"),
+                    "size_gb":       round(int(d.Size or 0) / (1024 ** 3), 2),
+                    "health_status": _DISK_HEALTH_STATUS.get(int(d.HealthStatus or 0), "Desconhecido"),
+                }
+
+                rel = reliability.get(device_id)
+                if rel is not None:
+                    wear = getattr(rel, "Wear", None)
+                    poh  = getattr(rel, "PowerOnHours", None)
+                    temp = getattr(rel, "Temperature", None)
+
+                    entry["wear_pct"]              = int(wear) if wear is not None else None
+                    entry["life_remaining_pct"]     = (100 - int(wear)) if wear is not None else None
+                    entry["temperature_c"]          = int(temp) if temp is not None else None
+                    entry["temperature_max_c"]      = getattr(rel, "TemperatureMax", None)
+                    entry["power_on_hours"]         = int(poh) if poh is not None else None
+                    entry["power_on_days"]          = round(int(poh) / 24, 1) if poh is not None else None
+                    entry["read_errors_uncorrected"] = getattr(rel, "ReadErrorsUncorrected", None)
+                    entry["write_errors_uncorrected"] = getattr(rel, "WriteErrorsUncorrected", None)
+                    entry["start_stop_count"]       = getattr(rel, "StartStopCycleCount", None)
+                else:
+                    entry["reliability_unavailable"] = (
+                        "Requer privilegios de administrador para detalhar "
+                        "desgaste, horas ligado e temperatura (SMART)."
+                    )
+
+                disks.append(entry)
+        except Exception:
+            pass
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+        return disks
 
     # ============================================================
     # GPU

@@ -1,5 +1,6 @@
 from config import *
 from app.app import App
+from util.schemes import SchemeBuilder
 
 
 class Optmize(App):
@@ -36,7 +37,48 @@ class Optmize(App):
         self.run_command("Encerrando tarefas em segundo plano", COMMANDS["kill_background_tasks"])
 
     def check_disk_health(self):
-        self.run_command("Saude do disco (SMART)", COMMANDS["check_disk_health"])
+        self.log_title("Saude do Disco (SMART)")
+        self._progress_start("Consultando Storage Reliability Counters (WMI)...")
+        try:
+            disks = SchemeBuilder()._collect_disk_health()
+            if not disks:
+                self.log_warn("Nenhum disco fisico detectado ou WMI indisponivel.")
+            for d in disks:
+                lines = [
+                    f"|- Status         : {d.get('health_status', 'N/A')}",
+                    f"|- Tipo           : {d.get('media_type', 'N/A')} / {d.get('bus_type', 'N/A')}",
+                    f"|- Capacidade     : {d.get('size_gb', 'N/A')} GB",
+                    f"|- Serial         : {d.get('serial_number', 'N/A')}",
+                ]
+
+                wear = d.get("wear_pct")
+                if wear is not None:
+                    lines.append(f"|- Desgaste (vida usada) : {wear}%")
+
+                poh = d.get("power_on_hours")
+                if poh is not None:
+                    dias = d.get("power_on_days")
+                    dias_str = f" (~{dias} dias)" if dias is not None else ""
+                    lines.append(f"|- Horas ligado   : {poh}h{dias_str}")
+
+                temp = d.get("temperature_c")
+                if temp is not None:
+                    lines.append(f"|- Temperatura    : {temp} C")
+
+                note = d.get("reliability_unavailable")
+                if note:
+                    lines.append(f"+- Aviso          : {note}")
+                else:
+                    lines[-1] = lines[-1].replace("|-", "+-", 1)
+
+                self.log_tree(d.get("model", "Disco"), lines)
+        except Exception as e:
+            self.log_error(str(e))
+        finally:
+            self._progress_stop()
+            self.log_sep()
+            self.log_ok("Verificacao concluida.")
+            self.log("")
 
     def disk_info(self):
         self.run_command("Informacoes do disco", COMMANDS["disk_info"])
