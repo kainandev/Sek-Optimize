@@ -9,7 +9,7 @@ import socket
 import getpass
 import subprocess
 import winreg
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from util.report_html import render_report
 
@@ -32,9 +32,18 @@ try:
 except ImportError:
     _HAS_CPUINFO = False
 
+try:
+    import win32evtlog
+    import win32evtlogutil
+    import win32security
+    import win32api
+    _HAS_EVTLOG = True
+except ImportError:
+    _HAS_EVTLOG = False
+
 
 # Version bumped when new top-level keys are added to the schema.
-SCHEMA_VERSION = "0.4"
+SCHEMA_VERSION = "0.5"
 
 # Readable labels for WMI memory type codes (Win32_PhysicalMemory.MemoryType)
 _RAM_TYPE = {
@@ -152,7 +161,7 @@ class SchemeBuilder:
         Sections: system, bios, motherboard, cpu, memory, storage,
                   disk_health, gpu, network, open_ports, audio, software,
                   installed_programs, startup_programs, local_users,
-                  antivirus, email_clients, runtime.
+                  antivirus, email_clients, event_log, runtime.
         """
         return {
             "schema_version":     SCHEMA_VERSION,
@@ -174,6 +183,7 @@ class SchemeBuilder:
             "local_users":        self._collect_local_users(),
             "antivirus":          self._collect_antivirus(),
             "email_clients":      self._collect_email_clients(),
+            "event_log":          self._collect_event_log(),
             "runtime":            self._collect_runtime(),
         }
 
@@ -535,6 +545,112 @@ class SchemeBuilder:
             except Exception:
                 pass
         return disks
+
+    # ============================================================
+    # EVENT LOG (Visualizador de Eventos do Windows)
+    #
+    # System/Application: todos os eventos de Erro e Aviso na janela de
+    # tempo configurada (nunca so uma amostra - o total real e sempre
+    # contado via 'total_matched', mesmo quando a lista de entradas e
+    # limitada por 'max_per_log' para nao inflar o relatorio).
+    # Security: exige SeSecurityPrivilege (mesmo elevado, o privilegio
+    # vem desabilitado por padrao no token) - habilitado explicitamente
+    # aqui; se a politica local ainda assim negar, o log e reportado com
+    # 'error' em vez de derrubar a coleta inteira.
+    # ============================================================
+    _EVENT_LOG_WINDOW_DAYS = 14
+    _EVENT_LOG_MAX_ENTRIES = 500
+
+    def _collect_event_log(self):
+        if not _HAS_EVTLOG:
+            return {}
+
+        try:
+            self._enable_privilege(win32security.SE_SECURITY_NAME)
+        except Exception:
+            pass
+
+        level_filters = {
+            "System":      {win32evtlog.EVENTLOG_ERROR_TYPE, win32evtlog.EVENTLOG_WARNING_TYPE},
+            "Application": {win32evtlog.EVENTLOG_ERROR_TYPE, win32evtlog.EVENTLOG_WARNING_TYPE},
+            "Security":    {win32evtlog.EVENTLOG_AUDIT_FAILURE},
+        }
+        level_labels = {
+            win32evtlog.EVENTLOG_ERROR_TYPE:       "Erro",
+            win32evtlog.EVENTLOG_WARNING_TYPE:      "Aviso",
+            win32evtlog.EVENTLOG_INFORMATION_TYPE:  "Informacao",
+            win32evtlog.EVENTLOG_AUDIT_SUCCESS:     "Auditoria (Sucesso)",
+            win32evtlog.EVENTLOG_AUDIT_FAILURE:     "Auditoria (Falha)",
+        }
+
+        cutoff = datetime.now() - timedelta(days=self._EVENT_LOG_WINDOW_DAYS)
+        result = {}
+
+        for log_name, wanted_types in level_filters.items():
+            entries      = []
+            by_source    = {}
+            total_matched = 0
+            try:
+                hand = win32evtlog.OpenEventLog(None, log_name)
+            except Exception as e:
+                result[log_name] = {"error": str(e), "entries": [], "total_matched": 0, "by_source": {}}
+                continue
+
+            try:
+                flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+                stop = False
+                while not stop:
+                    records = win32evtlog.ReadEventLog(hand, flags, 0)
+                    if not records:
+                        break
+                    for ev in records:
+                        if ev.TimeGenerated < cutoff:
+                            stop = True
+                            break
+                        if ev.EventType not in wanted_types:
+                            continue
+
+                        total_matched += 1
+                        source = str(ev.SourceName or "N/A")
+                        by_source[source] = by_source.get(source, 0) + 1
+
+                        if len(entries) < self._EVENT_LOG_MAX_ENTRIES:
+                            try:
+                                msg = win32evtlogutil.SafeFormatMessage(ev, log_name)
+                            except Exception:
+                                msg = " ".join(str(s) for s in (ev.StringInserts or []))
+                            entries.append({
+                                "time":     ev.TimeGenerated.strftime("%Y-%m-%d %H:%M:%S"),
+                                "level":    level_labels.get(ev.EventType, str(ev.EventType)),
+                                "source":   source,
+                                "event_id": ev.EventID & 0xFFFF,
+                                "message":  (msg or "").strip()[:500],
+                            })
+            except Exception as e:
+                result.setdefault(log_name, {})["error"] = str(e)
+            finally:
+                win32evtlog.CloseEventLog(hand)
+
+            result[log_name] = {
+                "window_days":   self._EVENT_LOG_WINDOW_DAYS,
+                "total_matched": total_matched,
+                "shown":         len(entries),
+                "by_source":     dict(sorted(by_source.items(), key=lambda kv: kv[1], reverse=True)),
+                "entries":       entries,
+            }
+
+        return result
+
+    def _enable_privilege(self, name):
+        """Habilita um privilegio no token do processo atual (ex.: SeSecurityPrivilege
+        para ler o log de Seguranca) - presente mas desabilitado por padrao mesmo
+        rodando elevado."""
+        htoken = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(),
+            win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY,
+        )
+        priv_id = win32security.LookupPrivilegeValue(None, name)
+        win32security.AdjustTokenPrivileges(htoken, False, [(priv_id, win32security.SE_PRIVILEGE_ENABLED)])
 
     # ============================================================
     # GPU

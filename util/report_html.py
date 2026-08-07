@@ -63,6 +63,7 @@ SECTION_TITLES = {
     "local_users":        "Usuarios Locais",
     "antivirus":          "Antivirus",
     "email_clients":      "Clientes de Email",
+    "event_log":          "Eventos do Sistema",
     "runtime":            "Runtime",
 }
 
@@ -359,11 +360,24 @@ def _render_memory_charts(memory):
 _DISK_HEALTH_PILL = {"Saudavel": "yes", "Aviso": "warn", "Nao Saudavel": "no"}
 
 
+def _render_disk_health_chart(disks):
+    wear_rows = [
+        (d.get("model", "?"), d.get("wear_pct"), _status_color(d.get("wear_pct")))
+        for d in disks
+        if isinstance(d, dict) and d.get("wear_pct") is not None
+    ]
+    if not wear_rows:
+        return ""
+    return _bar_chart(
+        "Desgaste dos Discos (SSD)", wear_rows, unit="%", max_value=100,
+        note="Percentual estimado de vida util consumida (SMART/Storage Reliability).",
+    )
+
+
 def _render_disk_health(disks):
     if not disks:
         return "<p class='empty'>Nenhum disco fisico detectado.</p>"
 
-    wear_rows = []
     cards = ""
     for d in disks:
         if not isinstance(d, dict):
@@ -384,7 +398,6 @@ def _render_disk_health(disks):
         if wear is not None:
             cards += f"<p><b>Desgaste (vida usada):</b> {_esc(wear)}%</p>"
             cards += _progress_bar(wear, label="desgaste")
-            wear_rows.append((d.get("model", "?"), wear, _status_color(wear)))
         if poh is not None:
             dias = f" (&asymp;{_esc(poh_days)} dias)" if poh_days is not None else ""
             cards += f"<p><b>Horas ligado:</b> {_esc(poh)}h{dias}</p>"
@@ -394,14 +407,7 @@ def _render_disk_health(disks):
             cards += f"<p class='dim'>{_esc(note)}</p>"
         cards += "</div>"
 
-    html = ""
-    if wear_rows:
-        html += _bar_chart(
-            "Desgaste dos Discos (SSD)", wear_rows, unit="%", max_value=100,
-            note="Percentual estimado de vida util consumida (SMART/Storage Reliability).",
-        )
-    html += f"<div class='grid'>{cards}</div>"
-    return html
+    return _render_disk_health_chart(disks) + f"<div class='grid'>{cards}</div>"
 
 
 def _render_ports_charts(ports):
@@ -444,6 +450,78 @@ def _render_installed_programs_charts(programs):
         "Programas por Fabricante", slices, unit=" programa(s)",
         center_label=str(len(programs)),
     )
+
+
+def _render_event_log_charts(logs):
+    if not isinstance(logs, dict) or not logs:
+        return ""
+    html = ""
+    for log_name, info in logs.items():
+        if not isinstance(info, dict) or info.get("error"):
+            continue
+        by_source = info.get("by_source") or {}
+        if not by_source:
+            continue
+        html += _bar_chart(
+            f"Fontes Mais Frequentes — {log_name}",
+            _top_n_with_others(by_source, n=8),
+        )
+    return html
+
+
+def _render_event_log(logs):
+    if not isinstance(logs, dict) or not logs:
+        return "<p class='empty'>Nenhum log de eventos coletado.</p>"
+
+    html = ""
+    for log_name, info in logs.items():
+        if not isinstance(info, dict):
+            continue
+
+        html += f"<h3>{_esc(log_name)}</h3>"
+
+        if info.get("error"):
+            html += (
+                f"<p class='empty'>Nao foi possivel ler este log: "
+                f"{_esc(info['error'])}</p>"
+            )
+            continue
+
+        total  = info.get("total_matched", 0)
+        shown  = info.get("shown", 0)
+        window = info.get("window_days", "?")
+        cap_note = (
+            f" (exibindo os {shown} mais recentes)" if shown < total else ""
+        )
+        html += (
+            f"<p class='meta-sub'>{total} evento(s) relevante(s) nos "
+            f"ultimos {window} dia(s){cap_note}.</p>"
+        )
+
+        by_source = info.get("by_source") or {}
+        if by_source:
+            html += _bar_chart(
+                f"Fontes Mais Frequentes — {log_name}",
+                _top_n_with_others(by_source, n=8),
+            )
+
+        entries = info.get("entries") or []
+        if entries:
+            rows = [
+                {
+                    "Data/Hora": e.get("time", "N/A"),
+                    "Nivel":     e.get("level", "N/A"),
+                    "Origem":    e.get("source", "N/A"),
+                    "ID":        e.get("event_id", "N/A"),
+                    "Mensagem":  e.get("message", ""),
+                }
+                for e in entries
+            ]
+            html += _list_table(rows)
+        else:
+            html += "<p class='empty'>Nenhum evento relevante no periodo.</p>"
+
+    return html
 
 
 def _render_local_users_charts(users):
@@ -515,6 +593,8 @@ def _render_section(key, value):
         return _render_installed_programs_charts(value) + _render_section_body(value)
     if key == "local_users" and isinstance(value, list):
         return _render_local_users_charts(value) + _render_section_body(value)
+    if key == "event_log" and isinstance(value, dict):
+        return _render_event_log(value)
     return _render_section_body(value)
 
 
@@ -582,7 +662,22 @@ def _render_section_body(value):
     return _kv_table([("valor", value)])
 
 
-def _overview_html(data):
+def _dashboard_section(title, key, chart_html, target_prefix=""):
+    """Bloco clicavel do Dashboard: titulo funciona como nav-link (reaproveita
+    o mesmo mecanismo de navegacao da sidebar) para pular direto a secao
+    completa. Omitido quando a secao nao tem grafico (nada para mostrar)."""
+    if not chart_html:
+        return ""
+    return (
+        "<div class='dash-section'>"
+        f"<a class='dash-section-title nav-link' data-target='{target_prefix}{key}' href='#'>"
+        f"{_esc(title)} <span class='dash-arrow'>&rarr;</span></a>"
+        f"<div class='dash-section-body'>{chart_html}</div>"
+        "</div>"
+    )
+
+
+def _dashboard_html(data, target_prefix=""):
     sysd = data.get("system", {}) or {}
     cpud = data.get("cpu", {}) or {}
     memd = data.get("memory", {}) or {}
@@ -600,35 +695,7 @@ def _overview_html(data):
     ram_pct  = memd.get("usage_pct", 0)
     disk_pct = vol0.get("usage_pct", 0)
 
-    charts_html = ""
-    total_gb = memd.get("total_gb")
-    used_gb  = memd.get("used_gb")
-    avail_gb = memd.get("available_gb")
-    if total_gb and used_gb is not None and avail_gb is not None:
-        charts_html += _pie_chart(
-            "Composicao da Memoria",
-            [
-                ("Em uso",     used_gb,  _status_color(ram_pct)),
-                ("Disponivel", avail_gb, C_BORDER),
-            ],
-            unit=" GB", center_label=f"{float(ram_pct):.0f}%",
-        )
-
-    total_used = sum(float(v.get("used_gb") or 0) for v in volumes)
-    total_free = sum(float(v.get("free_gb") or 0) for v in volumes)
-    total_disk = total_used + total_free
-    if total_disk > 0:
-        used_pct = (total_used / total_disk) * 100
-        charts_html += _pie_chart(
-            "Uso Total de Armazenamento",
-            [
-                ("Usado", round(total_used, 2), _status_color(used_pct)),
-                ("Livre", round(total_free, 2), C_BORDER),
-            ],
-            unit=" GB", center_label=f"{used_pct:.0f}%",
-        )
-
-    return f"""
+    kpi_html = f"""
     <div class="grid">
         <div class="card">
             <h3>Sistema</h3>
@@ -657,8 +724,20 @@ def _overview_html(data):
             ) if health0 else ""}
         </div>
     </div>
-    <div class="pie-row">{charts_html}</div>
     """
+
+    # Galeria: cada secao que produz grafico entra aqui, resumida ("rasa"),
+    # com o titulo levando direto ao painel completo daquela secao.
+    sections_html = ""
+    sections_html += _dashboard_section("Memoria",              "memory",              _render_memory_charts(memd),                       target_prefix)
+    sections_html += _dashboard_section("Armazenamento",        "storage",             _render_storage_charts(stor),                      target_prefix)
+    sections_html += _dashboard_section("Saude dos Discos",     "disk_health",         _render_disk_health_chart(data.get("disk_health") or []), target_prefix)
+    sections_html += _dashboard_section("Portas Abertas",       "open_ports",          _render_ports_charts(data.get("open_ports") or []), target_prefix)
+    sections_html += _dashboard_section("Programas Instalados", "installed_programs",  _render_installed_programs_charts(data.get("installed_programs") or []), target_prefix)
+    sections_html += _dashboard_section("Usuarios Locais",      "local_users",         _render_local_users_charts(data.get("local_users") or []), target_prefix)
+    sections_html += _dashboard_section("Eventos do Sistema",   "event_log",           _render_event_log_charts(data.get("event_log") or {}), target_prefix)
+
+    return kpi_html + f"<div class='dash-grid'>{sections_html}</div>"
 
 
 # ============================================================
@@ -767,8 +846,6 @@ small { color:var(--dim); font-size:11px; }
   font-variant-numeric:tabular-nums;
 }
 .chart-note { font-size:11px; color:var(--dim); margin-top:8px; }
-.pie-row { display:flex; gap:32px; flex-wrap:wrap; margin-top:6px; }
-.pie-row .pie-chart { margin:10px 0 0; flex:1; min-width:260px; }
 .pie-chart { margin:10px 0 20px; }
 .pie-body { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
 .pie {
@@ -785,6 +862,26 @@ small { color:var(--dim); font-size:11px; }
 .pie-legend-label { color:var(--dim); min-width:110px; }
 .pie-legend-value { font-variant-numeric:tabular-nums; }
 .pie-legend-value small { color:var(--dim); }
+.dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; margin-top:18px; }
+.dash-section {
+  background:var(--card2); border:1px solid var(--border); border-radius:6px;
+  padding:14px 16px; min-width:0;
+}
+.dash-section-title {
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  font-size:13px; font-weight:600; color:var(--accent); text-decoration:none;
+  padding-bottom:8px; margin-bottom:8px; border-bottom:1px solid var(--border);
+}
+.dash-section-title:hover { color:var(--text); }
+.dash-arrow { color:var(--dim); font-weight:400; }
+.dash-section-body .chart,
+.dash-section-body .pie-chart { margin:6px 0 14px; }
+.dash-section-body .chart-title { font-size:11px; margin-bottom:6px; }
+.dash-section-body .pie { width:90px; height:90px; }
+.dash-section-body .pie-hole { width:54px; height:54px; }
+.dash-section-body .pie-hole span { font-size:11px; }
+.dash-section-body .pie-legend-label { min-width:70px; }
+.dash-section-body .bar-label { width:120px; }
 ::-webkit-scrollbar { width:10px; height:10px; }
 ::-webkit-scrollbar-track { background:var(--panel); }
 ::-webkit-scrollbar-thumb { background:var(--border); border-radius:5px; }
@@ -897,11 +994,11 @@ def render_report(data, brand="Sek Optimize - System Analyzer"):
 
     sections = [k for k in data.keys() if k not in SKIP_KEYS]
 
-    nav = ['<li><a class="nav-link active" data-target="overview" href="#">Visao Geral</a></li>']
+    nav = ['<li><a class="nav-link active" data-target="overview" href="#">Dashboard</a></li>']
     for key in sections:
         nav.append(f'<li><a class="nav-link" data-target="{key}" href="#">{_esc(_title(key))}</a></li>')
 
-    panels = [f'<section id="overview" class="panel active"><h2>Visao Geral</h2>{_overview_html(data)}</section>']
+    panels = [f'<section id="overview" class="panel active"><h2>Dashboard</h2>{_dashboard_html(data)}</section>']
     for key in sections:
         panels.append(
             f'<section id="{key}" class="panel">'
@@ -948,7 +1045,7 @@ def render_consolidated(entries, brand="Sek Optimize - Relatorio Consolidado"):
         generated = data.get("generated_at", "N/A")
         sections  = [k for k in data.keys() if k not in SKIP_KEYS]
 
-        sub_items = [f'<li><a class="nav-link" data-target="m{i}-overview" href="#">Visao Geral</a></li>']
+        sub_items = [f'<li><a class="nav-link" data-target="m{i}-overview" href="#">Dashboard</a></li>']
         for key in sections:
             sub_items.append(
                 f'<li><a class="nav-link" data-target="m{i}-{key}" href="#">{_esc(_title(key))}</a></li>'
@@ -964,7 +1061,7 @@ def render_consolidated(entries, brand="Sek Optimize - Relatorio Consolidado"):
 
         panels.append(
             f'<section id="m{i}-overview" class="panel">'
-            f"<h2>{_esc(hostname)} &mdash; Visao Geral</h2>{_overview_html(data)}"
+            f"<h2>{_esc(hostname)} &mdash; Dashboard</h2>{_dashboard_html(data, target_prefix=f'm{i}-')}"
             "</section>"
         )
         for key in sections:
