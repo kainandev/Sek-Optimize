@@ -13,11 +13,12 @@ from app.updates     import Updates
 from app.startup     import Startup
 from app.programs    import Programs
 from app.services    import Services
+from app.disk_analyzer import DiskAnalyzer
 
 
 class MainApp(FastFetch, Files, Network, Optmize, Monitor, Security,
               Maintenance, Reports, EmailTools, Database, Updates,
-              Startup, Programs, Services):
+              Startup, Programs, Services, DiskAnalyzer):
     """
     Classe principal que une todos os modulos via heranca multipla.
 

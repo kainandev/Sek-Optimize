@@ -439,6 +439,7 @@ class GUI:
         self._add_nav_item(nav, "Inicializacao",   "⏻")
         self._add_nav_item(nav, "Programas",       "⬜")
         self._add_nav_item(nav, "Servicos",        "⚙")
+        self._add_nav_item(nav, "Disco",           "◴")
 
         scroll.bind_children_scroll()
 
@@ -533,6 +534,7 @@ class GUI:
         self._build_page_startup()
         self._build_page_programs()
         self._build_page_services()
+        self._build_page_disk()
 
     # ============================================================
     # ROTEAMENTO DE PAGINAS
@@ -1977,6 +1979,192 @@ class GUI:
                              daemon=True).start()
         self._services_status.config(text="Comando enviado (veja o terminal).",
                                      fg=C_ACCENT)
+
+    # ============================================================
+    # PAGINA: DISCO (analisador estilo TreeSize)
+    # ============================================================
+    def _build_page_disk(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Disco"] = page
+        self._page_title(page, "Disco",
+                         "Analise de uso de espaco, maiores arquivos e duplicados")
+
+        bar = tk.Frame(page, bg=C_CARD2, height=44)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        self._disk_path_var = tk.StringVar(
+            value=os.environ.get("SystemDrive", "C:") + "\\")
+        tk.Entry(bar, textvariable=self._disk_path_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 4), pady=8, ipady=3)
+        self._make_flat_btn(bar, "Pasta...",
+                            self._browse_disk).pack(side=tk.LEFT, pady=8)
+        self._make_accent_btn(bar, "Analisar",
+                              self._disk_analyze).pack(side=tk.LEFT, padx=(4, 2), pady=7)
+
+        bar2 = tk.Frame(page, bg=C_BG)
+        bar2.pack(fill=tk.X, padx=8, pady=4)
+        self._make_flat_btn(bar2, "Arvore de pastas",
+                            lambda: self._disk_set_mode("tree")).pack(side=tk.LEFT, padx=(0, 4))
+        self._make_flat_btn(bar2, "Maiores arquivos",
+                            lambda: self._disk_set_mode("files")).pack(side=tk.LEFT, padx=4)
+        self._make_flat_btn(bar2, "Localizar duplicados",
+                            self._disk_duplicates).pack(side=tk.LEFT, padx=4)
+        self._make_flat_btn(bar2, "Exportar relatorio",
+                            self._disk_report).pack(side=tk.LEFT, padx=4)
+        self._disk_status = tk.Label(bar2, text="Selecione uma pasta e clique Analisar.",
+                                     bg=C_BG, fg=C_MUTED, font=FONT_SMALL)
+        self._disk_status.pack(side=tk.RIGHT)
+
+        wrap = tk.Frame(page, bg=C_BG)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        ysb = ttk.Scrollbar(wrap, orient="vertical",
+                            style="App.Vertical.TScrollbar")
+        self._disk_tree = ttk.Treeview(
+            wrap, style="App.Treeview", show="tree headings",
+            columns=("tamanho", "pct"), yscrollcommand=ysb.set)
+        ysb.config(command=self._disk_tree.yview)
+        ysb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._disk_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._disk_tree.heading("#0", text="Pasta / Arquivo")
+        self._disk_tree.heading("tamanho", text="Tamanho")
+        self._disk_tree.heading("pct", text="%")
+        self._disk_tree.column("#0", width=460, anchor="w")
+        self._disk_tree.column("tamanho", width=110, anchor="e")
+        self._disk_tree.column("pct", width=70, anchor="e")
+        self._disk_tree.bind("<<TreeviewOpen>>", self._disk_on_open)
+
+        self._disk_result = None
+        self._disk_node_path = {}
+
+    def _browse_disk(self):
+        path = filedialog.askdirectory(title="Selecione a pasta/unidade para analisar")
+        if path:
+            self._disk_path_var.set(path)
+
+    def _disk_analyze(self):
+        root = self._disk_path_var.get().strip()
+        if not root or not os.path.isdir(root):
+            self._disk_status.config(text="Caminho invalido.", fg=C_DANGER)
+            return
+        self._disk_status.config(text="Analisando... (pode demorar)", fg=C_ACCENT)
+        self._show_terminal_if_hidden()
+
+        def _work():
+            result = self.app.disk_scan(root)
+            self.root.after(0, lambda: self._disk_done(result))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _disk_done(self, result):
+        self._disk_result = result
+        from app.disk_analyzer import human_size
+        self._disk_status.config(
+            text=f"Total: {human_size(result['total'])} em {result['n_files']} arquivos",
+            fg=C_SUCCESS)
+        self._disk_set_mode("tree")
+
+    def _disk_set_mode(self, mode):
+        if not self._disk_result:
+            self._disk_status.config(text="Analise uma pasta primeiro.", fg=C_WARNING)
+            return
+        tree = self._disk_tree
+        tree.delete(*tree.get_children())
+        self._disk_node_path = {}
+        from app.disk_analyzer import human_size
+
+        if mode == "files":
+            tree.heading("#0", text="Arquivo")
+            tree.heading("tamanho", text="Tamanho")
+            tree.heading("pct", text="")
+            for size, fp in self._disk_result["largest"]:
+                tree.insert("", tk.END, text=fp,
+                            values=(human_size(size), ""))
+            self._disk_status.config(
+                text=f"{len(self._disk_result['largest'])} maiores arquivos",
+                fg=C_DIM)
+            return
+
+        # modo arvore
+        tree.heading("#0", text="Pasta / Arquivo")
+        tree.heading("tamanho", text="Tamanho")
+        tree.heading("pct", text="%")
+        root = self._disk_result["root"]
+        total = self._disk_result["total"] or 1
+        riid = tree.insert("", tk.END, text=root, open=True,
+                           values=(human_size(total), "100%"))
+        self._disk_node_path[riid] = root
+        self._disk_load_children(riid, root)
+        tree.item(riid, open=True)
+
+    def _disk_load_children(self, parent_iid, path):
+        from app.disk_analyzer import human_size
+        total = self._disk_result["total"] or 1
+        for name, full, size, has_sub in self.app.disk_children(path):
+            pct = size / total * 100
+            iid = self._disk_tree.insert(
+                parent_iid, tk.END, text=name,
+                values=(human_size(size), f"{pct:.1f}%"))
+            self._disk_node_path[iid] = full
+            if has_sub:
+                # filho fantasma para exibir a seta de expandir
+                self._disk_tree.insert(iid, tk.END, text="...")
+
+    def _disk_on_open(self, _event):
+        iid = self._disk_tree.focus()
+        path = self._disk_node_path.get(iid)
+        if not path:
+            return
+        children = self._disk_tree.get_children(iid)
+        # Se so tem o filho fantasma, carrega de verdade
+        if len(children) == 1 and self._disk_tree.item(children[0], "text") == "...":
+            self._disk_tree.delete(children[0])
+            self._disk_load_children(iid, path)
+
+    def _disk_duplicates(self):
+        root = self._disk_path_var.get().strip()
+        if not root or not os.path.isdir(root):
+            self._disk_status.config(text="Caminho invalido.", fg=C_DANGER)
+            return
+        self._disk_status.config(text="Procurando duplicados...", fg=C_ACCENT)
+        self._show_terminal_if_hidden()
+
+        def _work():
+            res = self.app.disk_find_duplicates(root)
+            self.root.after(0, lambda: self._disk_show_dups(res))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _disk_show_dups(self, res):
+        from app.disk_analyzer import human_size
+        tree = self._disk_tree
+        tree.delete(*tree.get_children())
+        self._disk_node_path = {}
+        tree.heading("#0", text="Arquivos duplicados")
+        tree.heading("tamanho", text="Tamanho")
+        tree.heading("pct", text="Copias")
+        for g in res["groups"]:
+            gid = tree.insert("", tk.END,
+                              text=f"Grupo ({len(g['files'])} copias)",
+                              values=(human_size(g["size"]), len(g["files"])))
+            for fp in g["files"]:
+                tree.insert(gid, tk.END, text=fp, values=("", ""))
+        self._disk_status.config(
+            text=f"{len(res['groups'])} grupos | recuperavel: {human_size(res['wasted'])}",
+            fg=C_SUCCESS if res["groups"] else C_DIM)
+
+    def _disk_report(self):
+        if not self._disk_result:
+            self._disk_status.config(text="Analise uma pasta primeiro.", fg=C_WARNING)
+            return
+        path = filedialog.asksaveasfilename(
+            title="Salvar relatorio de disco", defaultextension=".html",
+            filetypes=[("HTML", "*.html")], initialfile="relatorio_disco.html")
+        if not path:
+            return
+        ok, msg = self.app.disk_report_html(self._disk_result, path)
+        self._disk_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
 
     # ============================================================
     # TERMINAL DOCKADO (colapsavel)
