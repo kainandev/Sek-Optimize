@@ -436,6 +436,9 @@ class GUI:
         self._add_nav_item(nav, "E-mail",          "✉")
         self._add_nav_item(nav, "Banco de Dados",  "▤")
         self._add_nav_item(nav, "HOSTS",           "▩")
+        self._add_nav_item(nav, "Inicializacao",   "⏻")
+        self._add_nav_item(nav, "Programas",       "⬜")
+        self._add_nav_item(nav, "Servicos",        "⚙")
 
         scroll.bind_children_scroll()
 
@@ -527,6 +530,9 @@ class GUI:
         self._build_page_email()
         self._build_page_database()
         self._build_page_hosts()
+        self._build_page_startup()
+        self._build_page_programs()
+        self._build_page_services()
 
     # ============================================================
     # ROTEAMENTO DE PAGINAS
@@ -1766,6 +1772,211 @@ class GUI:
         if ok:
             self._hosts_block_var.set("")
             self._hosts_reload()
+
+    # ============================================================
+    # HELPER: tabela (Treeview) com scrollbars
+    # ============================================================
+    def _make_table(self, parent, columns, widths):
+        wrap = tk.Frame(parent, bg=C_BG)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+        ysb = ttk.Scrollbar(wrap, orient="vertical",
+                            style="App.Vertical.TScrollbar")
+        xsb = ttk.Scrollbar(wrap, orient="horizontal")
+        tree = ttk.Treeview(wrap, style="App.Treeview", show="headings",
+                            columns=columns,
+                            yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+        ysb.config(command=tree.yview)
+        xsb.config(command=tree.xview)
+        ysb.pack(side=tk.RIGHT, fill=tk.Y)
+        xsb.pack(side=tk.BOTTOM, fill=tk.X)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for col, w in zip(columns, widths):
+            tree.heading(col, text=col)
+            tree.column(col, width=w, minwidth=50, anchor="w", stretch=True)
+        return tree
+
+    # ============================================================
+    # PAGINA: INICIALIZACAO
+    # ============================================================
+    def _build_page_startup(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Inicializacao"] = page
+        self._page_title(page, "Inicializacao",
+                         "Programas que iniciam com o Windows")
+
+        bar = tk.Frame(page, bg=C_CARD2, height=44)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        self._make_flat_btn(bar, "Recarregar",
+                            self._startup_reload).pack(side=tk.LEFT, padx=(10, 3), pady=8)
+        self._make_accent_btn(bar, "Habilitar",
+                              lambda: self._startup_toggle(True)).pack(side=tk.LEFT, padx=3, pady=7)
+        self._make_flat_btn(bar, "Desabilitar",
+                            lambda: self._startup_toggle(False)).pack(side=tk.LEFT, padx=3, pady=8)
+        self._startup_status = tk.Label(bar, text="", bg=C_CARD2, fg=C_MUTED,
+                                        font=FONT_SMALL)
+        self._startup_status.pack(side=tk.RIGHT, padx=10)
+
+        self._startup_tree = self._make_table(
+            page, ("Nome", "Local", "Estado", "Comando"),
+            (200, 110, 90, 400))
+        self._startup_map = {}
+
+    def _startup_reload(self):
+        items = self.app.startup_list()
+        tree = self._startup_tree
+        tree.delete(*tree.get_children())
+        self._startup_map.clear()
+        for it in items:
+            estado = "Ativo" if it["enabled"] else "Desativado"
+            iid = tree.insert("", tk.END, values=(
+                it["name"], it["location"], estado, it["command"]))
+            self._startup_map[iid] = it
+        self._startup_status.config(text=f"{len(items)} entradas", fg=C_DIM)
+
+    def _startup_toggle(self, enable):
+        sel = self._startup_tree.selection()
+        if not sel:
+            self._startup_status.config(text="Selecione uma entrada.", fg=C_WARNING)
+            return
+        done = 0
+        for iid in sel:
+            it = self._startup_map.get(iid)
+            if it:
+                ok, _msg = self.app.startup_set_enabled(it, enable)
+                done += 1 if ok else 0
+        self._startup_reload()
+        self._startup_status.config(
+            text=f"{done} entrada(s) atualizada(s).", fg=C_SUCCESS)
+
+    # ============================================================
+    # PAGINA: PROGRAMAS (desinstalador)
+    # ============================================================
+    def _build_page_programs(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Programas"] = page
+        self._page_title(page, "Programas",
+                         "Programas instalados e desinstalacao")
+
+        bar = tk.Frame(page, bg=C_CARD2, height=44)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        self._make_flat_btn(bar, "Recarregar",
+                            self._programs_reload).pack(side=tk.LEFT, padx=(10, 3), pady=8)
+        self._make_accent_btn(bar, "Desinstalar",
+                              self._programs_uninstall).pack(side=tk.LEFT, padx=3, pady=7)
+        self._programs_status = tk.Label(bar, text="", bg=C_CARD2, fg=C_MUTED,
+                                         font=FONT_SMALL)
+        self._programs_status.pack(side=tk.RIGHT, padx=10)
+
+        self._programs_tree = self._make_table(
+            page, ("Nome", "Versao", "Publicador"),
+            (330, 120, 260))
+        self._programs_map = {}
+
+    def _programs_reload(self):
+        items = self.app.programs_list()
+        tree = self._programs_tree
+        tree.delete(*tree.get_children())
+        self._programs_map.clear()
+        for it in items:
+            iid = tree.insert("", tk.END, values=(
+                it["name"], it["version"], it["publisher"]))
+            self._programs_map[iid] = it
+        self._programs_status.config(text=f"{len(items)} programas", fg=C_DIM)
+
+    def _programs_uninstall(self):
+        sel = self._programs_tree.selection()
+        if not sel:
+            self._programs_status.config(text="Selecione um programa.", fg=C_WARNING)
+            return
+        it = self._programs_map.get(sel[0])
+        if not it:
+            return
+        if not messagebox.askyesno(
+                "Desinstalar",
+                f"Deseja desinstalar:\n\n{it['name']}\n\n"
+                "O desinstalador do programa sera iniciado."):
+            return
+        ok, msg = self.app.program_uninstall(it)
+        self._programs_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
+
+    # ============================================================
+    # PAGINA: SERVICOS
+    # ============================================================
+    def _build_page_services(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Servicos"] = page
+        self._page_title(page, "Servicos",
+                         "Servicos do Windows e seu controle")
+
+        bar = tk.Frame(page, bg=C_CARD2, height=44)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        self._make_flat_btn(bar, "Recarregar",
+                            self._services_reload).pack(side=tk.LEFT, padx=(10, 3), pady=8)
+        self._make_accent_btn(bar, "Iniciar",
+                              lambda: self._services_control("start")).pack(side=tk.LEFT, padx=3, pady=7)
+        self._make_flat_btn(bar, "Parar",
+                            lambda: self._services_control("stop")).pack(side=tk.LEFT, padx=3, pady=8)
+
+        self._svc_start_mode = tk.StringVar(value="demand")
+        ttk.Combobox(bar, textvariable=self._svc_start_mode,
+                     values=["auto", "demand", "disabled"], state="readonly",
+                     style="App.TCombobox", width=9, font=FONT_SMALL).pack(
+                         side=tk.LEFT, padx=(12, 3), pady=9)
+        self._make_flat_btn(bar, "Aplicar inicio",
+                            lambda: self._services_control("config")).pack(side=tk.LEFT, padx=3, pady=8)
+
+        self._services_status = tk.Label(bar, text="", bg=C_CARD2, fg=C_MUTED,
+                                         font=FONT_SMALL)
+        self._services_status.pack(side=tk.RIGHT, padx=10)
+
+        self._services_tree = self._make_table(
+            page, ("Servico", "Nome", "Status", "Inicio"),
+            (300, 180, 90, 100))
+        self._services_map = {}
+
+    def _services_reload(self):
+        items = self.app.services_list()
+        tree = self._services_tree
+        tree.delete(*tree.get_children())
+        self._services_map.clear()
+        for it in items:
+            iid = tree.insert("", tk.END, values=(
+                it["display"], it["name"], it["status"], it["start"]))
+            self._services_map[iid] = it
+        self._services_status.config(text=f"{len(items)} servicos", fg=C_DIM)
+
+    def _services_control(self, op):
+        sel = self._services_tree.selection()
+        if not sel:
+            self._services_status.config(text="Selecione um servico.", fg=C_WARNING)
+            return
+        it = self._services_map.get(sel[0])
+        if not it:
+            return
+        name = it["name"]
+        self._show_terminal_if_hidden()
+        if op == "start":
+            threading.Thread(target=self.app.service_start, args=(name,),
+                             daemon=True).start()
+        elif op == "stop":
+            if not messagebox.askyesno("Parar servico",
+                    f"Parar o servico '{it['display']}'?"):
+                return
+            threading.Thread(target=self.app.service_stop, args=(name,),
+                             daemon=True).start()
+        elif op == "config":
+            mode = self._svc_start_mode.get()
+            if mode == "disabled" and not messagebox.askyesno(
+                    "Desabilitar servico",
+                    f"Desabilitar a inicializacao de '{it['display']}'?"):
+                return
+            threading.Thread(target=self.app.service_set_start, args=(name, mode),
+                             daemon=True).start()
+        self._services_status.config(text="Comando enviado (veja o terminal).",
+                                     fg=C_ACCENT)
 
     # ============================================================
     # TERMINAL DOCKADO (colapsavel)
