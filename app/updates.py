@@ -7,7 +7,7 @@ from app.app import App
 from config import VERSION_SOFTWARE
 
 # Repositorio de releases no GitHub
-_GITHUB_API = "https://api.github.com/repos/Na18k/Sek-Optimize/releases/latest"
+_GITHUB_API = "https://api.github.com/repos/kainandev/Sek-Optimize/releases/latest"
 
 
 def _parse_version(tag):
