@@ -9,10 +9,11 @@ from app.maintenance import Maintenance
 from app.reports     import Reports
 from app.email_tools import EmailTools
 from app.database    import Database
+from app.updates     import Updates
 
 
 class MainApp(FastFetch, Files, Network, Optmize, Monitor, Security,
-              Maintenance, Reports, EmailTools, Database):
+              Maintenance, Reports, EmailTools, Database, Updates):
     """
     Classe principal que une todos os modulos via heranca multipla.
 

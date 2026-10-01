@@ -146,9 +146,7 @@ class GUI:
 
         self.pages            = {}   # nome -> Frame da pagina
         self._nav_items       = {}   # nome -> dict(widgets) do botao da sidebar
-        self._category_index  = {}   # categoria -> lista de indices
         self._current_page    = None
-        self._current_category = None
         self._term_expanded   = True
 
         self._setup_window()
@@ -160,6 +158,12 @@ class GUI:
         self._show_page("Visao Geral")
         self._poll_log_queue()
         self._start_dashboard_updates()
+
+        # Verificacao de atualizacao silenciosa (so avisa se houver nova)
+        try:
+            self.root.after(3000, lambda: self.app.check_updates(silent=True))
+        except Exception:
+            pass
 
     # ============================================================
     # JANELA
@@ -256,6 +260,15 @@ class GUI:
         btn_about.bind("<Button-1>", lambda e: self._show_credits())
         btn_about.bind("<Enter>",    lambda e: btn_about.config(fg=C_TEXT))
         btn_about.bind("<Leave>",    lambda e: btn_about.config(fg=C_DIM))
+
+        btn_upd = tk.Label(
+            hdr, text="Atualizacoes", bg=C_PANEL, fg=C_DIM,
+            font=FONT_SMALL, padx=6, cursor="hand2")
+        btn_upd.pack(side=tk.RIGHT, pady=12)
+        btn_upd.bind("<Button-1>", lambda e: (self._show_terminal_if_hidden(),
+                                              self.app.check_updates(silent=False)))
+        btn_upd.bind("<Enter>",    lambda e: btn_upd.config(fg=C_TEXT))
+        btn_upd.bind("<Leave>",    lambda e: btn_upd.config(fg=C_DIM))
 
         tk.Frame(self.root, bg=C_BORDER, height=1).pack(fill=tk.X)
 
@@ -381,7 +394,7 @@ class GUI:
             return
         idx, cat, _label = self._search_results[sel[0]]
         self._hide_search_popup()
-        self._show_page(cat)
+        self._show_page("Acoes")
         if idx in self.check_vars:
             self.check_vars[idx].set(True)
         self._search_entry.delete(0, tk.END)
@@ -412,16 +425,9 @@ class GUI:
         scroll.pack(fill=tk.BOTH, expand=True)
         nav = scroll.inner
 
-        # Dashboard
+        # Principal
         self._add_nav_item(nav, "Visao Geral", "◉", top=8)
-
-        # Categorias de acoes
-        self._add_nav_section(nav, "ACOES")
-        tabs_presentes = {a["tab"] for a in ACTIONS.values()}
-        ordered = [c for c in CATEGORY_ORDER if c in tabs_presentes]
-        ordered += [c for c in sorted(tabs_presentes) if c not in ordered]
-        for cat in ordered:
-            self._add_nav_item(nav, cat, CATEGORY_ICONS.get(cat, "▪"))
+        self._add_nav_item(nav, "Acoes",       "☰")
 
         # Ferramentas
         self._add_nav_section(nav, "FERRAMENTAS")
@@ -429,6 +435,7 @@ class GUI:
         self._add_nav_item(nav, "Relatorios",      "▧")
         self._add_nav_item(nav, "E-mail",          "✉")
         self._add_nav_item(nav, "Banco de Dados",  "▤")
+        self._add_nav_item(nav, "HOSTS",           "▩")
 
         scroll.bind_children_scroll()
 
@@ -514,13 +521,12 @@ class GUI:
 
         # Monta as paginas
         self._build_page_dashboard()
-        tabs_presentes = {a["tab"] for a in ACTIONS.values()}
-        for cat in tabs_presentes:
-            self._build_action_page(cat)
+        self._build_page_acoes()
         self._build_page_grupos()
         self._build_page_relatorios()
         self._build_page_email()
         self._build_page_database()
+        self._build_page_hosts()
 
     # ============================================================
     # ROTEAMENTO DE PAGINAS
@@ -538,13 +544,11 @@ class GUI:
         self._current_page = name
         self._nav_set_active(name, True)
 
-        # Barra de acao so em paginas de categoria
-        if name in self._category_index:
-            self._current_category = name
+        # Barra de acao so na pagina de Acoes
+        if name == "Acoes":
             self._action_bar.pack(fill=tk.X, before=self._content)
             self._update_selection_count()
         else:
-            self._current_category = None
             self._action_bar.pack_forget()
 
     # ============================================================
@@ -611,7 +615,7 @@ class GUI:
             tk.Label(tile, text=f"{counts[cat]} acoes", bg=C_CARD, fg=C_DIM,
                      font=FONT_SMALL, anchor="w").pack(fill=tk.X, padx=12, pady=(0, 10))
             for w in (tile, *tile.winfo_children()):
-                w.bind("<Button-1>", lambda e, n=cat: self._show_page(n))
+                w.bind("<Button-1>", lambda e: self._show_page("Acoes"))
 
         scroll.bind_children_scroll()
 
@@ -693,29 +697,49 @@ class GUI:
             return ""
 
     # ============================================================
-    # PAGINAS DE ACOES (cards em grade de 2 colunas)
+    # PAGINA UNICA DE ACOES
+    # Todas as acoes numa so pagina, separadas por secoes de categoria,
+    # em cards de 2 colunas. A selecao e compartilhada entre as secoes,
+    # permitindo marcar itens de categorias diferentes e executar juntos.
     # ============================================================
-    def _build_action_page(self, category):
+    def _build_page_acoes(self):
         page = tk.Frame(self._content, bg=C_BG)
-        self.pages[category] = page
+        self.pages["Acoes"] = page
 
-        indices = sorted([i for i, a in ACTIONS.items() if a["tab"] == category])
-        self._category_index[category] = indices
-
-        self._page_title(page, category, f"{len(indices)} acoes disponiveis")
+        self._page_title(page, "Acoes",
+                         f"{len(ACTIONS)} acoes em {len({a['tab'] for a in ACTIONS.values()})} categorias")
 
         scroll = ScrollableFrame(page, bg=C_BG)
         scroll.pack(fill=tk.BOTH, expand=True)
         inner = scroll.inner
-        inner.columnconfigure(0, weight=1, uniform="col")
-        inner.columnconfigure(1, weight=1, uniform="col")
 
-        for pos, idx in enumerate(indices):
-            r, c = divmod(pos, 2)
-            card = self._make_action_card(inner, idx)
-            card.grid(row=r, column=c, sticky="nsew", padx=(16 if c == 0 else 8,
-                                                             16 if c == 1 else 8),
-                      pady=6)
+        tabs_presentes = {a["tab"] for a in ACTIONS.values()}
+        ordered = [c for c in CATEGORY_ORDER if c in tabs_presentes]
+        ordered += [c for c in sorted(tabs_presentes) if c not in ordered]
+
+        for cat in ordered:
+            indices = sorted([i for i, a in ACTIONS.items() if a["tab"] == cat])
+
+            # Cabecalho da secao
+            hdr = tk.Frame(inner, bg=C_CARD2)
+            hdr.pack(fill=tk.X, pady=(12, 0))
+            tk.Label(hdr,
+                     text=f"  {CATEGORY_ICONS.get(cat, '')}  {cat}   ({len(indices)})",
+                     bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
+                     anchor="w", pady=6).pack(fill=tk.X)
+            tk.Frame(inner, bg=C_BORDER, height=1).pack(fill=tk.X)
+
+            # Grade de cards da categoria
+            grid = tk.Frame(inner, bg=C_BG)
+            grid.pack(fill=tk.X)
+            grid.columnconfigure(0, weight=1, uniform="col")
+            grid.columnconfigure(1, weight=1, uniform="col")
+            for pos, idx in enumerate(indices):
+                r, c = divmod(pos, 2)
+                card = self._make_action_card(grid, idx)
+                card.grid(row=r, column=c, sticky="nsew",
+                          padx=(16 if c == 0 else 8, 16 if c == 1 else 8),
+                          pady=6)
 
         scroll.bind_children_scroll()
 
@@ -791,11 +815,8 @@ class GUI:
                 fg=C_ACCENT if n else C_DIM)
 
     def _check_all_current(self):
-        if not self._current_category:
-            return
-        for idx in self._category_index.get(self._current_category, []):
-            if idx in self.check_vars:
-                self.check_vars[idx].set(True)
+        for var in self.check_vars.values():
+            var.set(True)
 
     def _uncheck_all(self):
         for var in self.check_vars.values():
@@ -1583,6 +1604,11 @@ class GUI:
         self._db_status.pack(side=tk.LEFT)
         self._make_accent_btn(runbar, "Executar SQL",
                               self._run_db_query).pack(side=tk.RIGHT)
+        self._make_flat_btn(runbar, "Exportar XLSX",
+                            lambda: self._export_db("xlsx")).pack(side=tk.RIGHT, padx=4)
+        self._make_flat_btn(runbar, "Exportar CSV",
+                            lambda: self._export_db("csv")).pack(side=tk.RIGHT, padx=4)
+        self._db_last = ([], [])
 
         # Grade de resultados
         grid_wrap = tk.Frame(right, bg=C_BG)
@@ -1641,7 +1667,26 @@ class GUI:
             self._db_status.config(text=res.get("error", "Erro."), fg=C_DANGER)
             return
         self._db_status.config(text=res.get("info", ""), fg=C_SUCCESS)
-        self._fill_db_tree(res.get("columns", []), res.get("rows", []))
+        cols = res.get("columns", [])
+        rows = res.get("rows", [])
+        self._db_last = (cols, rows)
+        self._fill_db_tree(cols, rows)
+
+    def _export_db(self, fmt):
+        cols, rows = self._db_last
+        if not cols:
+            self._db_status.config(text="Execute um SELECT antes de exportar.",
+                                   fg=C_WARNING)
+            return
+        ext = ".csv" if fmt == "csv" else ".xlsx"
+        path = filedialog.asksaveasfilename(
+            title="Exportar resultado", defaultextension=ext,
+            filetypes=[(fmt.upper(), f"*{ext}")],
+            initialfile=f"consulta_sek{ext}")
+        if not path:
+            return
+        ok, msg = self.app.db_export(cols, rows, path, fmt)
+        self._db_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
 
     def _fill_db_tree(self, columns, rows):
         tree = self._db_tree
@@ -1657,6 +1702,70 @@ class GUI:
     def _show_terminal_if_hidden(self):
         if not self._term_expanded:
             self._toggle_terminal()
+
+    # ============================================================
+    # PAGINA: EDITOR DO ARQUIVO HOSTS
+    # ============================================================
+    def _build_page_hosts(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["HOSTS"] = page
+
+        self._page_title(page, "Arquivo HOSTS",
+                         "Editar o hosts do Windows e bloquear dominios")
+
+        # Barra de bloqueio rapido
+        block_bar = tk.Frame(page, bg=C_CARD2, height=44)
+        block_bar.pack(fill=tk.X)
+        block_bar.pack_propagate(False)
+        tk.Label(block_bar, text="Bloquear dominio:", bg=C_CARD2, fg=C_DIM,
+                 font=FONT_SMALL, padx=10).pack(side=tk.LEFT, pady=8)
+        self._hosts_block_var = tk.StringVar()
+        tk.Entry(block_bar, textvariable=self._hosts_block_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO, width=30).pack(
+                     side=tk.LEFT, pady=8, ipady=3)
+        self._make_flat_btn(block_bar, "Bloquear",
+                            self._hosts_do_block).pack(side=tk.LEFT, padx=6, pady=8)
+        self._make_flat_btn(block_bar, "Recarregar",
+                            self._hosts_reload).pack(side=tk.RIGHT, padx=4, pady=8)
+        self._make_accent_btn(block_bar, "Salvar",
+                              self._hosts_save).pack(side=tk.RIGHT, padx=(4, 10), pady=7)
+
+        self._hosts_status = tk.Label(page, text="", bg=C_BG, fg=C_MUTED,
+                                      font=FONT_SMALL, anchor="w", padx=10, pady=3)
+        self._hosts_status.pack(fill=tk.X)
+
+        self._hosts_text = tk.Text(
+            page, bg=C_LOG_BG, fg=C_TEXT, insertbackground=C_TEXT,
+            relief="flat", font=FONT_MONO, wrap="none",
+            highlightthickness=0, borderwidth=0)
+        self._hosts_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        self._hosts_reload()
+
+    def _hosts_reload(self):
+        ok, content = self.app.hosts_read()
+        self._hosts_text.delete("1.0", tk.END)
+        if ok:
+            self._hosts_text.insert("1.0", content)
+            self._hosts_status.config(text="Carregado.", fg=C_SUCCESS)
+        else:
+            self._hosts_status.config(text=content, fg=C_DANGER)
+
+    def _hosts_save(self):
+        content = self._hosts_text.get("1.0", "end-1c")
+        ok, msg = self.app.hosts_save(content)
+        self._hosts_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
+
+    def _hosts_do_block(self):
+        domain = self._hosts_block_var.get().strip()
+        if not domain:
+            return
+        ok, msg = self.app.hosts_block(domain)
+        self._hosts_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
+        if ok:
+            self._hosts_block_var.set("")
+            self._hosts_reload()
 
     # ============================================================
     # TERMINAL DOCKADO (colapsavel)

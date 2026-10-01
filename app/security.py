@@ -133,6 +133,54 @@ class Security(App):
             self.log_ok("Exportacao concluida.")
             self.log("")
 
+    # ============================================================
+    # EDITOR DO ARQUIVO HOSTS
+    # Leitura/gravacao direta. A gravacao exige privilegio de admin
+    # (o app ja roda elevado). Faz backup antes de sobrescrever.
+    # ============================================================
+    HOSTS_PATH = r"C:\Windows\System32\drivers\etc\hosts"
+
+    def hosts_read(self):
+        """Retorna (ok, conteudo_ou_erro)."""
+        try:
+            with open(self.HOSTS_PATH, "r", encoding="utf-8", errors="replace") as f:
+                return True, f.read()
+        except Exception as e:
+            return False, str(e)
+
+    def hosts_save(self, content):
+        """Grava o hosts (com backup .bak). Retorna (ok, mensagem)."""
+        try:
+            # Backup com data/hora
+            try:
+                import shutil
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                shutil.copy2(self.HOSTS_PATH, f"{self.HOSTS_PATH}.{ts}.bak")
+            except Exception:
+                pass
+            with open(self.HOSTS_PATH, "w", encoding="utf-8", errors="replace") as f:
+                f.write(content)
+            self.log_ok("Arquivo HOSTS salvo (backup .bak criado).")
+            return True, "HOSTS salvo (backup criado)."
+        except PermissionError:
+            return False, "Permissao negada. Execute como Administrador."
+        except Exception as e:
+            return False, str(e)
+
+    def hosts_block(self, domain):
+        """Acrescenta uma linha de bloqueio para o dominio. Retorna (ok, mensagem)."""
+        domain = (domain or "").strip().lower()
+        domain = domain.replace("http://", "").replace("https://", "").strip("/")
+        if not domain or " " in domain:
+            return False, "Dominio invalido."
+        ok, content = self.hosts_read()
+        if not ok:
+            return False, content
+        if domain in content:
+            return False, f"'{domain}' ja aparece no HOSTS."
+        novo = content.rstrip() + f"\n0.0.0.0 {domain}\n0.0.0.0 www.{domain}\n"
+        return self.hosts_save(novo)
+
     def check_bitlocker_status(self):
         self.run_command("Status do BitLocker", COMMANDS["check_bitlocker_status"])
 

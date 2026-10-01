@@ -120,3 +120,34 @@ class Database(App):
                 }
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # ============================================================
+    # EXPORTACAO DO RESULTADO (CSV / XLSX)
+    # ============================================================
+    def db_export(self, columns, rows, path, fmt):
+        """Exporta colunas/linhas para CSV ou XLSX. Retorna (ok, mensagem)."""
+        if not columns:
+            return False, "Nada para exportar (execute um SELECT primeiro)."
+        try:
+            if fmt == "csv":
+                import csv
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    w = csv.writer(f)
+                    w.writerow(columns)
+                    for r in rows:
+                        w.writerow(["" if v is None else v for v in r])
+            elif fmt == "xlsx":
+                from openpyxl import Workbook
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Consulta"
+                ws.append(list(columns))
+                for r in rows:
+                    ws.append(["" if v is None else v for v in r])
+                wb.save(path)
+            else:
+                return False, f"Formato invalido: {fmt}"
+            self.log_ok(f"Resultado exportado ({len(rows)} linhas): {path}")
+            return True, f"Exportado: {os.path.basename(path)}"
+        except Exception as e:
+            return False, str(e)
