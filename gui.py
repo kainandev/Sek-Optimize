@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import json
 import time
 import threading
@@ -70,6 +71,54 @@ CATEGORY_ORDER = [
     "Otimizacao", "Limpeza", "Sistema", "Rede",
     "Manutencao", "Monitor", "Privacidade", "Seguranca",
 ]
+
+# ============================================================
+# EDITOR DE CODIGO - cores de sintaxe
+# ============================================================
+C_SYN_KW  = "#c678dd"   # palavras-chave (roxo)
+C_SYN_STR = "#98c379"   # strings (verde)
+C_SYN_COM = "#6b7089"   # comentarios (cinza)
+C_SYN_NUM = "#d19a66"   # numeros (laranja)
+C_SYN_BRK = "#56b6c2"   # () [] {} (ciano)
+
+_KW_PY = {
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break",
+    "class", "continue", "def", "del", "elif", "else", "except", "finally",
+    "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
+    "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
+    "self", "print", "match", "case",
+}
+_KW_CLIKE = {
+    "auto", "bool", "break", "case", "catch", "char", "class", "const",
+    "continue", "default", "delete", "do", "double", "else", "enum", "export",
+    "extends", "false", "final", "finally", "float", "for", "function", "goto",
+    "if", "implements", "import", "int", "interface", "let", "long", "namespace",
+    "new", "null", "private", "protected", "public", "return", "short", "static",
+    "struct", "switch", "this", "throw", "throws", "true", "try", "typedef",
+    "typeof", "undefined", "union", "unsigned", "var", "void", "volatile",
+    "while", "async", "await", "string", "number", "boolean",
+}
+
+# Extensao -> (keywords, comentario_linha, (bloco_ini, bloco_fim)|None, triple_str)
+_LANG_MAP = {
+    ".py":  (_KW_PY, "#", None, True),
+    ".pyw": (_KW_PY, "#", None, True),
+    ".c":   (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".h":   (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".cpp": (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".hpp": (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".cc":  (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".cs":  (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".java":(_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".js":  (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".jsx": (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".ts":  (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".tsx": (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".go":  (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".rs":  (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".php": (_KW_CLIKE, "//", ("/*", "*/"), False),
+    ".json":(set(), None, None, False),
+}
 
 
 def resource_path(relative_path):
@@ -440,6 +489,7 @@ class GUI:
         self._add_nav_item(nav, "Programas",       "⬜")
         self._add_nav_item(nav, "Servicos",        "⚙")
         self._add_nav_item(nav, "Disco",           "◴")
+        self._add_nav_item(nav, "Editor",          "✎")
 
         scroll.bind_children_scroll()
 
@@ -535,6 +585,7 @@ class GUI:
         self._build_page_programs()
         self._build_page_services()
         self._build_page_disk()
+        self._build_page_editor()
 
     # ============================================================
     # ROTEAMENTO DE PAGINAS
@@ -2215,6 +2266,267 @@ class GUI:
             return
         ok, msg = self.app.disk_report_html(self._disk_result, path)
         self._disk_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
+
+    # ============================================================
+    # PAGINA: EDITOR DE CODIGO (estilo Notepad++)
+    # ============================================================
+    def _build_page_editor(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Editor"] = page
+        self._page_title(page, "Editor",
+                         "Abrir pasta/arquivo e editar com destaque de sintaxe")
+
+        bar = tk.Frame(page, bg=C_CARD2, height=42)
+        bar.pack(fill=tk.X)
+        bar.pack_propagate(False)
+        self._make_flat_btn(bar, "Abrir pasta",
+                            self._ed_open_folder).pack(side=tk.LEFT, padx=(10, 3), pady=7)
+        self._make_flat_btn(bar, "Abrir arquivo",
+                            self._ed_open_file).pack(side=tk.LEFT, padx=3, pady=7)
+        self._make_accent_btn(bar, "Salvar  (Ctrl+S)",
+                              self._ed_save).pack(side=tk.LEFT, padx=3, pady=6)
+        self._ed_info = tk.Label(bar, text="Nenhum arquivo aberto.",
+                                 bg=C_CARD2, fg=C_MUTED, font=FONT_SMALL)
+        self._ed_info.pack(side=tk.RIGHT, padx=10)
+
+        pane = tk.Frame(page, bg=C_BG)
+        pane.pack(fill=tk.BOTH, expand=True)
+
+        # Arvore de arquivos
+        left = tk.Frame(pane, bg=C_CARD2, width=230)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+        tk.Label(left, text="Arquivos", bg=C_CARD2, fg=C_DIM, font=FONT_SMALL,
+                 anchor="w", padx=10, pady=6).pack(fill=tk.X)
+        tk.Frame(left, bg=C_BORDER, height=1).pack(fill=tk.X)
+        ftree_wrap = tk.Frame(left, bg=C_CARD2)
+        ftree_wrap.pack(fill=tk.BOTH, expand=True)
+        fsb = ttk.Scrollbar(ftree_wrap, orient="vertical",
+                            style="App.Vertical.TScrollbar")
+        self._ed_tree = ttk.Treeview(ftree_wrap, style="App.Treeview",
+                                     show="tree", yscrollcommand=fsb.set)
+        fsb.config(command=self._ed_tree.yview)
+        fsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._ed_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._ed_tree.bind("<<TreeviewOpen>>", self._ed_tree_expand)
+        self._ed_tree.bind("<Double-1>", self._ed_tree_click)
+        self._ed_node_path = {}
+
+        tk.Frame(pane, bg=C_BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y)
+
+        # Area de edicao com numeros de linha
+        right = tk.Frame(pane, bg=C_LOG_BG)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._ed_lines = tk.Text(
+            right, width=5, bg=C_PANEL, fg=C_MUTED, font=FONT_MONO,
+            relief="flat", borderwidth=0, state="disabled",
+            takefocus=0, highlightthickness=0)
+        self._ed_lines.pack(side=tk.LEFT, fill=tk.Y)
+
+        esb = ttk.Scrollbar(right, orient="vertical",
+                            style="App.Vertical.TScrollbar")
+        self._ed_text = tk.Text(
+            right, bg=C_LOG_BG, fg=C_TEXT, insertbackground=C_TEXT,
+            font=FONT_MONO, relief="flat", borderwidth=0, wrap="none",
+            undo=True, highlightthickness=0, tabs="  ")
+        esb.config(command=self._ed_yview)
+        self._ed_text.config(yscrollcommand=self._ed_on_scroll)
+        esb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._ed_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Tags de sintaxe
+        self._ed_text.tag_configure("kw",  foreground=C_SYN_KW)
+        self._ed_text.tag_configure("str", foreground=C_SYN_STR)
+        self._ed_text.tag_configure("com", foreground=C_SYN_COM)
+        self._ed_text.tag_configure("num", foreground=C_SYN_NUM)
+        self._ed_text.tag_configure("brk", foreground=C_SYN_BRK)
+
+        self._ed_text.bind("<KeyRelease>", self._ed_on_key)
+        self._ed_text.bind("<Control-s>", lambda e: (self._ed_save(), "break"))
+        self._ed_text.bind("<MouseWheel>", self._ed_wheel)
+        self._ed_lines.bind("<MouseWheel>", self._ed_wheel)
+
+        self._ed_path = None
+        self._ed_lang = (set(), "#", None, True)
+        self._ed_hl_job = None
+
+    # ---- sincronizacao de scroll / numeros de linha ----
+    def _ed_yview(self, *args):
+        self._ed_text.yview(*args)
+        self._ed_lines.yview(*args)
+
+    def _ed_on_scroll(self, first, last):
+        # mantem a barra e os numeros alinhados
+        self._ed_lines.yview_moveto(first)
+        return
+
+    def _ed_wheel(self, event):
+        delta = int(-1 * (event.delta / 120))
+        self._ed_text.yview_scroll(delta, "units")
+        self._ed_lines.yview_scroll(delta, "units")
+        return "break"
+
+    def _ed_update_lines(self):
+        total = int(self._ed_text.index("end-1c").split(".")[0])
+        content = "\n".join(str(i) for i in range(1, total + 1))
+        self._ed_lines.config(state="normal")
+        self._ed_lines.delete("1.0", tk.END)
+        self._ed_lines.insert("1.0", content)
+        self._ed_lines.config(state="disabled")
+        self._ed_lines.yview_moveto(self._ed_text.yview()[0])
+
+    # ---- arvore de arquivos ----
+    def _ed_open_folder(self, path=None):
+        if path is None:
+            path = filedialog.askdirectory(title="Abrir pasta no editor")
+        if not path:
+            return
+        self._ed_tree.delete(*self._ed_tree.get_children())
+        self._ed_node_path = {}
+        root_id = self._ed_tree.insert("", tk.END, text=os.path.basename(path) or path,
+                                       open=True)
+        self._ed_node_path[root_id] = path
+        self._ed_fill_tree(root_id, path)
+
+    def _ed_fill_tree(self, parent_iid, path):
+        try:
+            entries = sorted(os.scandir(path),
+                             key=lambda e: (not e.is_dir(), e.name.lower()))
+        except OSError:
+            return
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    iid = self._ed_tree.insert(parent_iid, tk.END,
+                                               text="\U0001f4c1 " + entry.name)
+                    self._ed_node_path[iid] = entry.path
+                    self._ed_tree.insert(iid, tk.END, text="...")  # fantasma
+                else:
+                    iid = self._ed_tree.insert(parent_iid, tk.END,
+                                               text="  " + entry.name)
+                    self._ed_node_path[iid] = entry.path
+            except OSError:
+                continue
+
+    def _ed_tree_expand(self, _event):
+        iid = self._ed_tree.focus()
+        path = self._ed_node_path.get(iid)
+        if not path or not os.path.isdir(path):
+            return
+        children = self._ed_tree.get_children(iid)
+        if len(children) == 1 and self._ed_tree.item(children[0], "text") == "...":
+            self._ed_tree.delete(children[0])
+            self._ed_fill_tree(iid, path)
+
+    def _ed_tree_click(self, _event):
+        iid = self._ed_tree.focus()
+        path = self._ed_node_path.get(iid)
+        if path and os.path.isfile(path):
+            self._ed_load(path)
+
+    # ---- abrir / salvar ----
+    def _ed_open_file(self):
+        path = filedialog.askopenfilename(title="Abrir arquivo no editor")
+        if path:
+            self._ed_load(path)
+
+    def _ed_load(self, path):
+        content = None
+        for enc in ("utf-8", "cp1252", "latin-1"):
+            try:
+                with open(path, "r", encoding=enc) as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, OSError):
+                continue
+        if content is None:
+            self._ed_info.config(text="Nao foi possivel abrir (binario?).", fg=C_DANGER)
+            return
+        self._ed_path = path
+        ext = os.path.splitext(path)[1].lower()
+        self._ed_lang = _LANG_MAP.get(ext, (_KW_CLIKE, "//", ("/*", "*/"), False))
+        self._ed_text.delete("1.0", tk.END)
+        self._ed_text.insert("1.0", content)
+        self._ed_text.edit_reset()
+        self._ed_update_lines()
+        self._ed_highlight()
+        lang = ext[1:].upper() if ext else "TXT"
+        self._ed_info.config(text=f"{path}   [{lang}]", fg=C_DIM)
+
+    def _ed_save(self):
+        if not self._ed_path:
+            path = filedialog.asksaveasfilename(title="Salvar como")
+            if not path:
+                return
+            self._ed_path = path
+        try:
+            content = self._ed_text.get("1.0", "end-1c")
+            with open(self._ed_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            self._ed_info.config(text=f"Salvo: {self._ed_path}", fg=C_SUCCESS)
+        except Exception as e:
+            self._ed_info.config(text=f"Erro ao salvar: {e}", fg=C_DANGER)
+
+    # ---- destaque de sintaxe ----
+    def _ed_on_key(self, _event=None):
+        self._ed_update_lines()
+        if self._ed_hl_job:
+            self.root.after_cancel(self._ed_hl_job)
+        self._ed_hl_job = self.root.after(180, self._ed_highlight)
+
+    def _ed_highlight(self):
+        self._ed_hl_job = None
+        text_widget = self._ed_text
+        content = text_widget.get("1.0", "end-1c")
+        if len(content) > 400_000:   # evita travar em arquivos enormes
+            for t in ("kw", "str", "com", "num", "brk"):
+                text_widget.tag_remove(t, "1.0", tk.END)
+            return
+
+        keywords, line_com, block, triple = self._ed_lang
+        for t in ("kw", "str", "com", "num", "brk"):
+            text_widget.tag_remove(t, "1.0", tk.END)
+
+        def add(tag, start, end):
+            text_widget.tag_add(tag, f"1.0+{start}c", f"1.0+{end}c")
+
+        # 1) keywords, numeros, brackets
+        if keywords:
+            kw_re = r"\b(?:" + "|".join(re.escape(k) for k in keywords) + r")\b"
+            for m in re.finditer(kw_re, content):
+                add("kw", m.start(), m.end())
+        for m in re.finditer(r"\b\d+(?:\.\d+)?\b", content):
+            add("num", m.start(), m.end())
+        for m in re.finditer(r"[()\[\]{}]", content):
+            add("brk", m.start(), m.end())
+
+        # 2) strings (sobrepoem kw/num/brk)
+        patterns = []
+        if triple:
+            patterns.append(r'"""(?:.|\n)*?"""')
+            patterns.append(r"'''(?:.|\n)*?'''")
+        patterns.append(r'"(?:\\.|[^"\\\n])*"')
+        patterns.append(r"'(?:\\.|[^'\\\n])*'")
+        for pat in patterns:
+            for m in re.finditer(pat, content):
+                for t in ("kw", "num", "brk"):
+                    text_widget.tag_remove(t, f"1.0+{m.start()}c", f"1.0+{m.end()}c")
+                add("str", m.start(), m.end())
+
+        # 3) comentarios (sobrepoem tudo)
+        com_spans = []
+        if line_com:
+            for m in re.finditer(re.escape(line_com) + r"[^\n]*", content):
+                com_spans.append((m.start(), m.end()))
+        if block:
+            bpat = re.escape(block[0]) + r"(?:.|\n)*?" + re.escape(block[1])
+            for m in re.finditer(bpat, content):
+                com_spans.append((m.start(), m.end()))
+        for s, e in com_spans:
+            for t in ("kw", "num", "brk", "str"):
+                text_widget.tag_remove(t, f"1.0+{s}c", f"1.0+{e}c")
+            add("com", s, e)
 
     # ============================================================
     # TERMINAL DOCKADO (colapsavel)

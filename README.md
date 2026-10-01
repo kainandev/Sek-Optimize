@@ -29,8 +29,15 @@
 - **Conversão de e-mail**: PST/OST → MBOX/EML (leitura direta do arquivo, sem
   Outlook, via `pypff`), MBOX → EML, e gravação em PST via Outlook (COM).
 - **Leitor de banco de dados**: abrir arquivos SQLite (`.db`/`.sqlite`), listar
-  tabelas e executar comandos SQL com resultado em grade.
-- Busca rápida de ações no topo da janela.
+  tabelas, executar SQL com resultado em grade e exportar para CSV/XLSX.
+- **Analisador de disco** estilo TreeSize: árvore de tamanhos por pasta, maiores
+  arquivos, localização de duplicados e relatório HTML.
+- **Gerenciadores**: inicialização do Windows (ligar/desligar), desinstalador de
+  programas e controle de serviços.
+- **Editor de código** estilo Notepad++: abrir pasta/arquivo com destaque de
+  sintaxe (palavras-chave, strings, comentários, números e colchetes).
+- **Editor do arquivo HOSTS** e bloqueio de domínios.
+- Busca rápida de ações e verificador de atualização.
 
 **Sek Optimize** é uma ferramenta gráfica em Python para **otimização, manutenção e diagnóstico do Windows**, focada em desempenho, estabilidade e praticidade para técnicos e usuários avançados.
 
