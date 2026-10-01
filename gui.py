@@ -11,27 +11,58 @@ from config import ACTIONS, AUTOCOMPLETE_COMMANDS, VERSION_SOFTWARE, GROUPS_FILE
 # ============================================================
 # PALETA DE CORES
 # ============================================================
-C_BG      = "#18181f"
-C_PANEL   = "#101018"
-C_CARD    = "#22222e"
-C_CARD2   = "#1c1c28"
+C_BG      = "#15151c"
+C_PANEL   = "#0e0e15"
+C_SIDEBAR = "#0f0f17"
+C_CARD    = "#20202c"
+C_CARD2   = "#1a1a24"
 C_HOVER   = "#2a2a3a"
-C_BORDER  = "#2e2e3e"
+C_BORDER  = "#2b2b3a"
 C_ACCENT  = "#4a80ff"
 C_ACCENT2 = "#3060cc"
 C_TEXT    = "#d8d8e8"
-C_DIM     = "#6868a0"
+C_DIM     = "#7676a8"
+C_MUTED   = "#565680"
 C_SUCCESS = "#48d890"
 C_WARNING = "#f0a040"
 C_DANGER  = "#e85050"
-C_LOG_BG  = "#0c0c14"
+C_LOG_BG  = "#0a0a11"
 C_LOG_FG  = "#38d060"
 
-FONT_TITLE = ("Segoe UI", 13, "bold")
+FONT_TITLE = ("Segoe UI", 14, "bold")
+FONT_H2    = ("Segoe UI", 12, "bold")
 FONT_NORM  = ("Segoe UI", 10)
 FONT_SMALL = ("Segoe UI", 9)
+FONT_TINY  = ("Segoe UI", 8)
 FONT_MONO  = ("Consolas", 9)
 FONT_GRP   = ("Segoe UI", 9, "bold")
+FONT_NAV   = ("Segoe UI", 10)
+FONT_ICON  = ("Segoe UI Symbol", 12)
+
+# ============================================================
+# NAVEGACAO
+# Ordem e metadados das paginas da sidebar.
+# icon: glyph BMP (monocromatico em Segoe UI Symbol).
+# kind: "dashboard" | "actions" | "special"
+# ============================================================
+CATEGORY_ICONS = {
+    "Otimizacao":   "⚙",   # engrenagem
+    "Limpeza":      "⌧",   # delete
+    "Sistema":      "☷",   # trigrama (grade)
+    "Rede":         "⇅",   # setas up/down
+    "Manutencao":   "⚒",   # martelo/picareta
+    "Monitor":      "▤",   # quadrado com linhas
+    "Privacidade":  "⚿",   # chave
+    "Seguranca":    "⌨",   # (placeholder) -> ajustado abaixo
+}
+
+# ============================================================
+# ORDEM DAS CATEGORIAS NA SIDEBAR (mais usadas primeiro)
+# ============================================================
+CATEGORY_ORDER = [
+    "Otimizacao", "Limpeza", "Sistema", "Rede",
+    "Manutencao", "Monitor", "Privacidade", "Seguranca",
+]
 
 
 def resource_path(relative_path):
@@ -65,7 +96,6 @@ class ScrollableFrame(tk.Frame):
         self.inner.bind("<Configure>", self._on_inner_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
 
-        # Vincula scroll do mouse no canvas e nos filhos ja criados
         self._bind_scroll(self.canvas)
         self._bind_scroll(self.inner)
 
@@ -92,6 +122,10 @@ class ScrollableFrame(tk.Frame):
 
 # ============================================================
 # GUI PRINCIPAL
+# Layout estilo AIDA64:
+#   HEADER
+#   SIDEBAR (nav) | AREA DIREITA (barra de acao + paginas + terminal dockado)
+#   STATUS BAR
 # ============================================================
 class GUI:
 
@@ -100,8 +134,15 @@ class GUI:
         self.app  = app
 
         self.autocomplete_index = 0
-        self.check_vars = {}       # action_idx -> BooleanVar (aba Acoes)
-        self.group_check_vars = {} # action_idx -> BooleanVar (editor de grupo)
+        self.check_vars = {}        # action_idx -> BooleanVar (global, compartilhado entre paginas)
+        self.group_check_vars = {}  # action_idx -> BooleanVar (editor de grupo)
+
+        self.pages            = {}   # nome -> Frame da pagina
+        self._nav_items       = {}   # nome -> dict(widgets) do botao da sidebar
+        self._category_index  = {}   # categoria -> lista de indices
+        self._current_page    = None
+        self._current_category = None
+        self._term_expanded   = True
 
         self._setup_window()
         self._apply_theme()
@@ -109,6 +150,7 @@ class GUI:
         self._build_body()
         self._build_statusbar()
 
+        self._show_page("Visao Geral")
         self._poll_log_queue()
 
     # ============================================================
@@ -116,13 +158,16 @@ class GUI:
     # ============================================================
     def _setup_window(self):
         self.root.title(f"Sek Optimize  v{VERSION_SOFTWARE}")
-        self.root.geometry("1300x720")
-        self.root.minsize(1000, 600)
+        self.root.geometry("1320x760")
+        self.root.minsize(1060, 640)
         self.root.configure(bg=C_BG)
 
         icon_path = resource_path("icon.ico")
         if os.path.exists(icon_path):
-            self.root.iconbitmap(icon_path)
+            try:
+                self.root.iconbitmap(icon_path)
+            except Exception:
+                pass
 
     # ============================================================
     # TEMA TTK
@@ -131,15 +176,6 @@ class GUI:
         style = ttk.Style(self.root)
         style.theme_use("default")
 
-        style.configure("App.TNotebook",
-            background=C_PANEL, borderwidth=0, tabmargins=0)
-        style.configure("App.TNotebook.Tab",
-            background=C_CARD2, foreground=C_DIM,
-            font=FONT_NORM, padding=[14, 6], borderwidth=0)
-        style.map("App.TNotebook.Tab",
-            background=[("selected", C_BG), ("active", C_HOVER)],
-            foreground=[("selected", C_TEXT), ("active", C_TEXT)])
-
         style.configure("App.Vertical.TScrollbar",
             troughcolor=C_CARD, background=C_BORDER,
             borderwidth=0, arrowsize=10)
@@ -147,7 +183,6 @@ class GUI:
         style.configure("App.Horizontal.TProgressbar",
             troughcolor=C_CARD2, background=C_ACCENT, borderwidth=0)
 
-        # Estilo do Combobox usado na aba de relatorios
         style.configure("App.TCombobox",
             fieldbackground=C_CARD, background=C_CARD2,
             foreground=C_TEXT, selectbackground=C_ACCENT,
@@ -156,25 +191,40 @@ class GUI:
             fieldbackground=[("readonly", C_CARD)],
             foreground=[("readonly", C_TEXT)])
 
+        style.configure("App.Treeview",
+            background=C_CARD2, fieldbackground=C_CARD2,
+            foreground=C_TEXT, borderwidth=0, rowheight=22,
+            font=FONT_MONO)
+        style.configure("App.Treeview.Heading",
+            background=C_CARD, foreground=C_ACCENT,
+            font=FONT_SMALL, borderwidth=0, relief="flat")
+        style.map("App.Treeview",
+            background=[("selected", "#1e3050")],
+            foreground=[("selected", C_TEXT)])
+
     # ============================================================
     # HEADER
     # ============================================================
     def _build_header(self):
-        hdr = tk.Frame(self.root, bg=C_PANEL, height=46)
+        hdr = tk.Frame(self.root, bg=C_PANEL, height=50)
         hdr.pack(side=tk.TOP, fill=tk.X)
         hdr.pack_propagate(False)
 
-        tk.Label(hdr, text="Sek Optimize", bg=C_PANEL, fg=C_ACCENT,
-                font=FONT_TITLE).pack(side=tk.LEFT, padx=16, pady=10)
-        tk.Label(hdr, text=f"v{VERSION_SOFTWARE}", bg=C_PANEL, fg=C_DIM,
-                font=FONT_SMALL).pack(side=tk.LEFT, pady=10)
+        logo_wrap = tk.Frame(hdr, bg=C_PANEL)
+        logo_wrap.pack(side=tk.LEFT, padx=16)
 
-        # Botao de creditos discreto no canto direito do header
+        tk.Label(logo_wrap, text="⬢", bg=C_PANEL, fg=C_ACCENT,
+                 font=("Segoe UI Symbol", 16)).pack(side=tk.LEFT, pady=12)
+        tk.Label(logo_wrap, text="Sek Optimize", bg=C_PANEL, fg=C_TEXT,
+                 font=FONT_TITLE).pack(side=tk.LEFT, padx=(8, 0), pady=10)
+        tk.Label(logo_wrap, text=f"v{VERSION_SOFTWARE}", bg=C_PANEL, fg=C_MUTED,
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0), pady=14)
+
         btn_about = tk.Label(
             hdr, text="Sobre o Software", bg=C_PANEL, fg=C_DIM,
             font=FONT_SMALL, padx=14, cursor="hand2",
         )
-        btn_about.pack(side=tk.RIGHT, pady=10)
+        btn_about.pack(side=tk.RIGHT, pady=12)
         btn_about.bind("<Button-1>", lambda e: self._show_credits())
         btn_about.bind("<Enter>",    lambda e: btn_about.config(fg=C_TEXT))
         btn_about.bind("<Leave>",    lambda e: btn_about.config(fg=C_DIM))
@@ -191,7 +241,6 @@ class GUI:
         win.configure(bg=C_CARD)
         win.grab_set()
 
-        # Centraliza em relacao a janela principal
         self.root.update_idletasks()
         x = self.root.winfo_x() + (self.root.winfo_width()  // 2) - 180
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 120
@@ -203,13 +252,11 @@ class GUI:
         body.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(body, text="Sek Optimize", bg=C_CARD, fg=C_ACCENT,
-                font=FONT_TITLE).pack(anchor="w")
+                font=FONT_H2).pack(anchor="w")
         tk.Label(body, text=f"Versao  {VERSION_SOFTWARE}", bg=C_CARD, fg=C_DIM,
                 font=FONT_SMALL).pack(anchor="w", pady=(2, 14))
 
-        info = CREDITS
-
-        for label, value in info:
+        for label, value in CREDITS:
             row = tk.Frame(body, bg=C_CARD)
             row.pack(fill=tk.X, pady=1)
             tk.Label(row, text=f"{label}:", bg=C_CARD, fg=C_DIM,
@@ -222,158 +269,320 @@ class GUI:
         tk.Label(body, text="github.com/kainandev/Sek-Optimize",
                 bg=C_CARD, fg=C_DIM, font=FONT_SMALL).pack(anchor="w")
 
-        btn_fechar = self._make_flat_btn(body, "Fechar", win.destroy)
-        btn_fechar.pack(anchor="e", pady=(14, 0))
+        self._make_flat_btn(body, "Fechar", win.destroy).pack(anchor="e", pady=(14, 0))
 
     # ============================================================
-    # CORPO
+    # CORPO: sidebar | area direita
     # ============================================================
     def _build_body(self):
         body = tk.Frame(self.root, bg=C_BG)
         body.pack(fill=tk.BOTH, expand=True)
 
-        self._build_left_panel(body)
+        self._build_sidebar(body)
         tk.Frame(body, bg=C_BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y)
-        self._build_log_panel(body)
+        self._build_right_area(body)
 
     # ============================================================
-    # PAINEL ESQUERDO: abas no topo
+    # SIDEBAR DE NAVEGACAO
     # ============================================================
-    def _build_left_panel(self, parent):
-        left = tk.Frame(parent, bg=C_BG, width=430)
-        left.pack(side=tk.LEFT, fill=tk.Y)
-        left.pack_propagate(False)
+    def _build_sidebar(self, parent):
+        side = tk.Frame(parent, bg=C_SIDEBAR, width=200)
+        side.pack(side=tk.LEFT, fill=tk.Y)
+        side.pack_propagate(False)
 
-        nb = ttk.Notebook(left, style="App.TNotebook")
-        nb.pack(fill=tk.BOTH, expand=True)
+        scroll = ScrollableFrame(side, bg=C_SIDEBAR)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        nav = scroll.inner
 
-        tab_acoes      = tk.Frame(nb, bg=C_BG)
-        tab_grupos     = tk.Frame(nb, bg=C_BG)
-        tab_relatorios = tk.Frame(nb, bg=C_BG)
+        # Dashboard
+        self._add_nav_item(nav, "Visao Geral", "◉", top=8)
 
-        nb.add(tab_acoes,      text="  Acoes  ")
-        nb.add(tab_grupos,     text="  Grupos  ")
-        nb.add(tab_relatorios, text="  Relatorios  ")
+        # Categorias de acoes
+        self._add_nav_section(nav, "ACOES")
+        tabs_presentes = {a["tab"] for a in ACTIONS.values()}
+        ordered = [c for c in CATEGORY_ORDER if c in tabs_presentes]
+        ordered += [c for c in sorted(tabs_presentes) if c not in ordered]
+        for cat in ordered:
+            self._add_nav_item(nav, cat, CATEGORY_ICONS.get(cat, "▪"))
 
-        self._build_tab_acoes(tab_acoes)
-        self._build_tab_grupos(tab_grupos)
-        self._build_tab_relatorios(tab_relatorios)
+        # Ferramentas
+        self._add_nav_section(nav, "FERRAMENTAS")
+        self._add_nav_item(nav, "Grupos",     "❏")
+        self._add_nav_item(nav, "Relatorios", "▧")
 
-        nb.bind("<<NotebookTabChanged>>", lambda e: (
-            self._refresh_groups_list()
-            if nb.index(nb.select()) == 1 else None
-        ))
+        scroll.bind_children_scroll()
+
+    def _add_nav_section(self, parent, text):
+        tk.Label(parent, text=text, bg=C_SIDEBAR, fg=C_MUTED,
+                 font=FONT_TINY, anchor="w", padx=16, pady=2).pack(
+                     fill=tk.X, pady=(12, 2))
+
+    def _add_nav_item(self, parent, name, icon, top=0):
+        row = tk.Frame(parent, bg=C_SIDEBAR, cursor="hand2")
+        row.pack(fill=tk.X, pady=(top, 0))
+
+        strip = tk.Frame(row, bg=C_SIDEBAR, width=3)
+        strip.pack(side=tk.LEFT, fill=tk.Y)
+
+        ic = tk.Label(row, text=icon, bg=C_SIDEBAR, fg=C_DIM,
+                      font=FONT_ICON, width=2)
+        ic.pack(side=tk.LEFT, padx=(8, 4), pady=7)
+
+        lbl = tk.Label(row, text=name, bg=C_SIDEBAR, fg=C_DIM,
+                       font=FONT_NAV, anchor="w")
+        lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=7)
+
+        self._nav_items[name] = {"row": row, "strip": strip, "icon": ic, "label": lbl}
+
+        for w in (row, ic, lbl, strip):
+            w.bind("<Button-1>", lambda e, n=name: self._show_page(n))
+            w.bind("<Enter>",    lambda e, n=name: self._nav_hover(n, True))
+            w.bind("<Leave>",    lambda e, n=name: self._nav_hover(n, False))
+
+    def _nav_hover(self, name, entering):
+        if name == self._current_page:
+            return
+        it = self._nav_items[name]
+        bg = C_HOVER if entering else C_SIDEBAR
+        fg = C_TEXT if entering else C_DIM
+        for key in ("row", "icon", "label"):
+            it[key].config(bg=bg)
+        it["icon"].config(fg=fg)
+        it["label"].config(fg=fg)
+
+    def _nav_set_active(self, name, active):
+        it = self._nav_items[name]
+        bg = C_CARD if active else C_SIDEBAR
+        for key in ("row", "icon", "label"):
+            it[key].config(bg=bg)
+        it["strip"].config(bg=C_ACCENT if active else bg)
+        it["icon"].config(fg=C_ACCENT if active else C_DIM, bg=bg)
+        it["label"].config(fg=C_TEXT if active else C_DIM, bg=bg,
+                           font=("Segoe UI", 10, "bold") if active else FONT_NAV)
 
     # ============================================================
-    # ABA: ACOES
+    # AREA DIREITA: barra de acao + stack de paginas + terminal
     # ============================================================
-    def _build_tab_acoes(self, parent):
+    def _build_right_area(self, parent):
+        right = tk.Frame(parent, bg=C_BG)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        toolbar = tk.Frame(parent, bg=C_CARD2, height=42)
-        toolbar.pack(fill=tk.X)
-        toolbar.pack_propagate(False)
+        # Barra de acao global (so visivel em paginas de acoes)
+        self._action_bar = tk.Frame(right, bg=C_CARD2, height=44)
+        self._action_bar.pack_propagate(False)
 
-        self._make_flat_btn(toolbar, "Selecionar Tudo",
-                            self._check_all).pack(side=tk.LEFT, padx=(8, 3), pady=8)
-        self._make_flat_btn(toolbar, "Limpar",
+        self._make_flat_btn(self._action_bar, "Selecionar tudo",
+                            self._check_all_current).pack(side=tk.LEFT, padx=(10, 3), pady=8)
+        self._make_flat_btn(self._action_bar, "Limpar",
                             self._uncheck_all).pack(side=tk.LEFT, padx=3, pady=8)
-        self._make_accent_btn(toolbar, "Executar Selecionados",
-                              self._execute_checked).pack(side=tk.RIGHT, padx=8, pady=8)
 
-        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X)
+        self._btn_exec = self._make_accent_btn(
+            self._action_bar, "Executar selecionadas", self._execute_checked)
+        self._btn_exec.pack(side=tk.RIGHT, padx=10, pady=7)
 
-        desc_outer = tk.Frame(parent, bg=C_CARD2, height=68)
-        desc_outer.pack(fill=tk.X)
-        desc_outer.pack_propagate(False)
+        self._sel_count_lbl = tk.Label(
+            self._action_bar, text="0 selecionadas", bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL)
+        self._sel_count_lbl.pack(side=tk.RIGHT, padx=8)
 
-        self.desc_label = tk.Label(
-            desc_outer,
-            text="Passe o mouse sobre uma acao para ver a descricao.",
-            bg=C_CARD2, fg=C_DIM, font=FONT_SMALL,
-            anchor="nw", justify="left", wraplength=400,
-            padx=10, pady=6,
+        # Container das paginas
+        self._content = tk.Frame(right, bg=C_BG)
+        self._content.pack(fill=tk.BOTH, expand=True)
+
+        # Terminal dockado
+        self._build_terminal_dock(right)
+
+        # Monta as paginas
+        self._build_page_dashboard()
+        tabs_presentes = {a["tab"] for a in ACTIONS.values()}
+        for cat in tabs_presentes:
+            self._build_action_page(cat)
+        self._build_page_grupos()
+        self._build_page_relatorios()
+
+    # ============================================================
+    # ROTEAMENTO DE PAGINAS
+    # ============================================================
+    def _show_page(self, name):
+        if name not in self.pages:
+            return
+        if self._current_page:
+            self._nav_set_active(self._current_page, False)
+
+        for p in self.pages.values():
+            p.pack_forget()
+        self.pages[name].pack(fill=tk.BOTH, expand=True)
+
+        self._current_page = name
+        self._nav_set_active(name, True)
+
+        # Barra de acao so em paginas de categoria
+        if name in self._category_index:
+            self._current_category = name
+            self._action_bar.pack(fill=tk.X, before=self._content)
+            self._update_selection_count()
+        else:
+            self._current_category = None
+            self._action_bar.pack_forget()
+
+    # ============================================================
+    # PAGINA: VISAO GERAL (placeholder enxuto; dashboard vem na Fase 2)
+    # ============================================================
+    def _build_page_dashboard(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Visao Geral"] = page
+
+        self._page_title(page, "Visao Geral",
+                         "Resumo do sistema e atalhos principais")
+
+        scroll = ScrollableFrame(page, bg=C_BG)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        inner = scroll.inner
+
+        card = tk.Frame(inner, bg=C_CARD)
+        card.pack(fill=tk.X, padx=16, pady=12)
+
+        tk.Label(card, text="Bem-vindo ao Sek Optimize",
+                 bg=C_CARD, fg=C_ACCENT, font=FONT_H2,
+                 anchor="w", padx=16).pack(fill=tk.X, pady=(14, 4))
+        tk.Label(card,
+                 text=("Selecione uma categoria na barra lateral para ver as acoes "
+                       "disponiveis.\nO detalhamento completo do hardware e impresso "
+                       "no terminal ao abrir o programa."),
+                 bg=C_CARD, fg=C_DIM, font=FONT_NORM,
+                 anchor="w", justify="left", padx=16).pack(fill=tk.X, pady=(0, 14))
+
+        # Contagem rapida de acoes por categoria
+        grid = tk.Frame(inner, bg=C_BG)
+        grid.pack(fill=tk.X, padx=10)
+        grid.columnconfigure(0, weight=1, uniform="d")
+        grid.columnconfigure(1, weight=1, uniform="d")
+        grid.columnconfigure(2, weight=1, uniform="d")
+
+        counts = defaultdict(int)
+        for a in ACTIONS.values():
+            counts[a["tab"]] += 1
+
+        for pos, cat in enumerate(sorted(counts.keys())):
+            r, c = divmod(pos, 3)
+            tile = tk.Frame(grid, bg=C_CARD, cursor="hand2")
+            tile.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
+            tk.Label(tile, text=CATEGORY_ICONS.get(cat, "▪"),
+                     bg=C_CARD, fg=C_ACCENT, font=("Segoe UI Symbol", 18)).pack(
+                         anchor="w", padx=14, pady=(12, 0))
+            tk.Label(tile, text=cat, bg=C_CARD, fg=C_TEXT,
+                     font=FONT_NORM, anchor="w").pack(fill=tk.X, padx=14)
+            tk.Label(tile, text=f"{counts[cat]} acoes", bg=C_CARD, fg=C_DIM,
+                     font=FONT_SMALL, anchor="w").pack(fill=tk.X, padx=14, pady=(0, 12))
+            for w in (tile, *tile.winfo_children()):
+                w.bind("<Button-1>", lambda e, n=cat: self._show_page(n))
+
+        scroll.bind_children_scroll()
+
+    # ============================================================
+    # PAGINAS DE ACOES (cards em grade de 2 colunas)
+    # ============================================================
+    def _build_action_page(self, category):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages[category] = page
+
+        indices = sorted([i for i, a in ACTIONS.items() if a["tab"] == category])
+        self._category_index[category] = indices
+
+        self._page_title(page, category, f"{len(indices)} acoes disponiveis")
+
+        scroll = ScrollableFrame(page, bg=C_BG)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        inner = scroll.inner
+        inner.columnconfigure(0, weight=1, uniform="col")
+        inner.columnconfigure(1, weight=1, uniform="col")
+
+        for pos, idx in enumerate(indices):
+            r, c = divmod(pos, 2)
+            card = self._make_action_card(inner, idx)
+            card.grid(row=r, column=c, sticky="nsew", padx=(16 if c == 0 else 8,
+                                                             16 if c == 1 else 8),
+                      pady=6)
+
+        scroll.bind_children_scroll()
+
+    def _make_action_card(self, parent, idx):
+        action = ACTIONS[idx]
+        danger = action.get("danger", False)
+        accent = C_WARNING if danger else C_TEXT
+
+        var = tk.BooleanVar(value=self.check_vars[idx].get()
+                            if idx in self.check_vars else False)
+        self.check_vars[idx] = var
+        var.trace_add("write", lambda *_: self._update_selection_count())
+
+        card = tk.Frame(parent, bg=C_CARD, highlightthickness=1,
+                        highlightbackground=C_BORDER)
+
+        head = tk.Frame(card, bg=C_CARD)
+        head.pack(fill=tk.X, padx=10, pady=(10, 2))
+
+        chk = tk.Checkbutton(
+            head, variable=var, bg=C_CARD, activebackground=C_CARD,
+            fg=accent, selectcolor=C_CARD2,
+            highlightthickness=0, borderwidth=0, relief="flat",
         )
-        self.desc_label.pack(fill=tk.BOTH, expand=True)
+        chk.pack(side=tk.LEFT)
 
-        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X)
+        title = tk.Label(head, text=action["label"], bg=C_CARD, fg=accent,
+                         font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        title.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        self._scroll_acoes = ScrollableFrame(parent, bg=C_CARD)
-        self._scroll_acoes.pack(fill=tk.BOTH, expand=True)
+        if danger:
+            tk.Label(head, text="⚠", bg=C_CARD, fg=C_WARNING,
+                     font=FONT_SMALL).pack(side=tk.RIGHT)
 
-        self._populate_acoes()
+        desc = tk.Label(card, text=action.get("description", ""),
+                        bg=C_CARD, fg=C_DIM, font=FONT_SMALL,
+                        anchor="nw", justify="left", wraplength=250)
+        desc.pack(fill=tk.X, padx=10, pady=(0, 10))
 
-    def _populate_acoes(self):
-        inner = self._scroll_acoes.inner
-        for w in inner.winfo_children():
-            w.destroy()
-        self.check_vars.clear()
+        def _toggle(_e=None, v=var):
+            v.set(not v.get())
 
-        groups = defaultdict(list)
-        for idx, action in ACTIONS.items():
-            groups[action["tab"]].append(idx)
+        def _enter(_e, c=card, parts=(card, head, title, desc)):
+            for p in parts:
+                p.config(bg=C_HOVER)
+            chk.config(bg=C_HOVER, activebackground=C_HOVER)
+            title.config(bg=C_HOVER)
+            desc.config(bg=C_HOVER)
+            head.config(bg=C_HOVER)
+            c.config(highlightbackground=C_ACCENT)
 
-        for group_name in sorted(groups.keys()):
-            indices = sorted(groups[group_name])
+        def _leave(_e, c=card, parts=(card, head, title, desc)):
+            for p in parts:
+                p.config(bg=C_CARD)
+            chk.config(bg=C_CARD, activebackground=C_CARD)
+            title.config(bg=C_CARD)
+            desc.config(bg=C_CARD)
+            head.config(bg=C_CARD)
+            c.config(highlightbackground=C_BORDER)
 
-            grp_hdr = tk.Frame(inner, bg=C_CARD2)
-            grp_hdr.pack(fill=tk.X, pady=(6, 0))
-            self._scroll_acoes._bind_scroll(grp_hdr)
+        for w in (card, head, title, desc):
+            w.bind("<Button-1>", _toggle)
+            w.bind("<Enter>", _enter)
+            w.bind("<Leave>", _leave)
 
-            tk.Label(grp_hdr, text=f"  {group_name}", bg=C_CARD2,
-                     fg=C_ACCENT, font=FONT_GRP,
-                     anchor="w", pady=4).pack(fill=tk.X)
-            self._scroll_acoes._bind_scroll(grp_hdr.winfo_children()[-1])
+        return card
 
-            tk.Frame(inner, bg=C_BORDER, height=1).pack(fill=tk.X)
+    def _update_selection_count(self):
+        n = sum(1 for v in self.check_vars.values() if v.get())
+        if hasattr(self, "_sel_count_lbl"):
+            self._sel_count_lbl.config(
+                text=f"{n} selecionada" + ("" if n == 1 else "s"),
+                fg=C_ACCENT if n else C_DIM)
 
-            for idx in indices:
-                action = ACTIONS[idx]
-                var = tk.BooleanVar(value=False)
-                self.check_vars[idx] = var
-                color = C_WARNING if action["danger"] else C_TEXT
-
-                row = tk.Frame(inner, bg=C_CARD, cursor="hand2")
-                row.pack(fill=tk.X)
-                self._scroll_acoes._bind_scroll(row)
-
-                chk = tk.Checkbutton(
-                    row, variable=var,
-                    bg=C_CARD, activebackground=C_HOVER,
-                    fg=color, selectcolor=C_CARD2,
-                    highlightthickness=0, borderwidth=0, relief="flat",
-                )
-                chk.pack(side=tk.LEFT, padx=(8, 2), pady=3)
-                self._scroll_acoes._bind_scroll(chk)
-
-                lbl = tk.Label(row, text=action["label"], bg=C_CARD,
-                               fg=color, font=FONT_NORM, anchor="w")
-                lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=3)
-                self._scroll_acoes._bind_scroll(lbl)
-
-                # Clique no label = toggle checkbox
-                lbl.bind("<Button-1>", lambda e, v=var: v.set(not v.get()))
-
-                # Hover: muda fundo e mostra descricao
-                desc   = action.get("description", "")
-                danger = action.get("danger", False)
-
-                def _enter(e, r=row, c=chk, d=desc, dng=danger):
-                    r.config(bg=C_HOVER)
-                    c.config(bg=C_HOVER)
-                    self.desc_label.config(
-                        text=d, fg=C_WARNING if dng else C_TEXT)
-
-                def _leave(e, r=row, c=chk):
-                    r.config(bg=C_CARD)
-                    c.config(bg=C_CARD)
-
-                for w in (row, lbl, chk):
-                    w.bind("<Enter>", _enter)
-                    w.bind("<Leave>", _leave)
-
-    def _check_all(self):
-        for var in self.check_vars.values():
-            var.set(True)
+    def _check_all_current(self):
+        if not self._current_category:
+            return
+        for idx in self._category_index.get(self._current_category, []):
+            if idx in self.check_vars:
+                self.check_vars[idx].set(True)
 
     def _uncheck_all(self):
         for var in self.check_vars.values():
@@ -392,20 +601,36 @@ class GUI:
         ).start()
 
     # ============================================================
-    # ABA: GRUPOS
-    # Grupos padrao vem de DEFAULT_GROUPS (codigo).
-    # Grupos customizados sao salvos em JSON.
+    # TITULO PADRAO DE PAGINA
     # ============================================================
-    def _build_tab_grupos(self, parent):
-        # Carrega grupos customizados do JSON
+    def _page_title(self, parent, title, subtitle=""):
+        head = tk.Frame(parent, bg=C_BG)
+        head.pack(fill=tk.X, padx=16, pady=(14, 8))
+        tk.Label(head, text=title, bg=C_BG, fg=C_TEXT,
+                 font=FONT_TITLE, anchor="w").pack(anchor="w")
+        if subtitle:
+            tk.Label(head, text=subtitle, bg=C_BG, fg=C_MUTED,
+                     font=FONT_SMALL, anchor="w").pack(anchor="w")
+        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X, padx=16)
+
+    # ============================================================
+    # PAGINA: GRUPOS
+    # ============================================================
+    def _build_page_grupos(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Grupos"] = page
+
         self._custom_groups = self._load_custom_groups()
 
-        toolbar = tk.Frame(parent, bg=C_CARD2, height=42)
+        self._page_title(page, "Grupos",
+                         "Conjuntos de acoes executados em sequencia")
+
+        toolbar = tk.Frame(page, bg=C_CARD2, height=44)
         toolbar.pack(fill=tk.X)
         toolbar.pack_propagate(False)
 
         self._make_flat_btn(toolbar, "Novo Grupo",
-                            self._new_group).pack(side=tk.LEFT, padx=(8, 3), pady=8)
+                            self._new_group).pack(side=tk.LEFT, padx=(10, 3), pady=8)
         self._make_flat_btn(toolbar, "Excluir",
                             self._delete_group).pack(side=tk.LEFT, padx=3, pady=8)
         self._make_flat_btn(toolbar, "Exportar",
@@ -413,15 +638,12 @@ class GUI:
         self._make_flat_btn(toolbar, "Importar",
                             self._import_groups).pack(side=tk.LEFT, padx=3, pady=8)
         self._make_accent_btn(toolbar, "Executar Grupo",
-                              self._run_group).pack(side=tk.RIGHT, padx=8, pady=8)
+                              self._run_group).pack(side=tk.RIGHT, padx=10, pady=7)
 
-        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X)
-
-        pane = tk.Frame(parent, bg=C_BG)
+        pane = tk.Frame(page, bg=C_BG)
         pane.pack(fill=tk.BOTH, expand=True)
 
-        # Lista de grupos
-        list_frame = tk.Frame(pane, bg=C_CARD2, width=160)
+        list_frame = tk.Frame(pane, bg=C_CARD2, width=180)
         list_frame.pack(side=tk.LEFT, fill=tk.Y)
         list_frame.pack_propagate(False)
 
@@ -441,7 +663,6 @@ class GUI:
 
         tk.Frame(pane, bg=C_BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y)
 
-        # Editor
         edit_outer = tk.Frame(pane, bg=C_BG)
         edit_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -461,7 +682,6 @@ class GUI:
         self._group_name_entry.pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), pady=6)
 
-        # Label indica se o grupo e padrao (nao editavel) ou customizado
         self._group_type_label = tk.Label(
             name_frame, text="", bg=C_CARD2, fg=C_DIM, font=FONT_SMALL)
         self._group_type_label.pack(side=tk.LEFT, padx=4)
@@ -472,8 +692,7 @@ class GUI:
 
         tk.Frame(edit_outer, bg=C_BORDER, height=1).pack(fill=tk.X)
 
-        tk.Label(edit_outer,
-                 text="Acoes do grupo:",
+        tk.Label(edit_outer, text="Acoes do grupo:",
                  bg=C_BG, fg=C_DIM, font=FONT_SMALL,
                  anchor="w", padx=10, pady=5).pack(fill=tk.X)
 
@@ -482,9 +701,9 @@ class GUI:
 
         self._current_group_is_builtin = False
         self._populate_group_editor()
+        self._refresh_groups_list()
 
     def _all_groups(self):
-        """Retorna dicionario unificado: padrao primeiro, customizados depois."""
         merged = {}
         for name, data in DEFAULT_GROUPS.items():
             merged[name] = data
@@ -568,8 +787,7 @@ class GUI:
         self._btn_salvar.config(fg=C_DIM if is_builtin else C_TEXT,
                                 cursor="arrow" if is_builtin else "hand2")
         self._group_type_label.config(
-            text="(padrao)" if is_builtin else "(customizado)",
-            fg=C_DIM)
+            text="(padrao)" if is_builtin else "(customizado)", fg=C_DIM)
 
         self._populate_group_editor(
             preset_indices=group.get("actions", []),
@@ -601,8 +819,7 @@ class GUI:
             return
         selected = sorted([i for i, v in self.group_check_vars.items() if v.get()])
         if not selected:
-            messagebox.showwarning("Grupo vazio",
-                "Selecione ao menos uma acao.")
+            messagebox.showwarning("Grupo vazio", "Selecione ao menos uma acao.")
             return
         self._custom_groups[name] = {"actions": selected}
         self._save_custom_groups()
@@ -684,7 +901,6 @@ class GUI:
                 imported = json.load(f)
             if not isinstance(imported, dict):
                 raise ValueError("Formato invalido.")
-            # Filtra apenas entradas com "actions" como lista de inteiros
             valid = {
                 k: v for k, v in imported.items()
                 if isinstance(v, dict) and isinstance(v.get("actions"), list)
@@ -701,14 +917,10 @@ class GUI:
             self._custom_groups.update(valid)
             self._save_custom_groups()
             self._refresh_groups_list()
-            messagebox.showinfo("Importado",
-                f"{len(valid)} grupo(s) importado(s).")
+            messagebox.showinfo("Importado", f"{len(valid)} grupo(s) importado(s).")
         except Exception as e:
             messagebox.showerror("Erro ao importar", str(e))
 
-    # ============================================================
-    # PERSISTENCIA DE GRUPOS CUSTOMIZADOS
-    # ============================================================
     def _load_custom_groups(self):
         if os.path.exists(GROUPS_FILE):
             try:
@@ -726,265 +938,144 @@ class GUI:
             pass
 
     # ============================================================
-    # ABA: RELATORIOS
-    # Duas secoes: exportar para arquivo e enviar para API.
-    # Os botoes de acao so ficam ativos quando os campos obrigatorios
-    # estao preenchidos, com feedback visual imediato via trace.
+    # PAGINA: RELATORIOS
     # ============================================================
-    def _build_tab_relatorios(self, parent):
-        scroll    = ScrollableFrame(parent, bg=C_BG)
+    def _build_page_relatorios(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Relatorios"] = page
+
+        self._page_title(page, "Relatorios",
+                         "Exportar, enviar e converter relatorios do sistema")
+
+        scroll    = ScrollableFrame(page, bg=C_BG)
         scroll.pack(fill=tk.BOTH, expand=True)
         container = scroll.inner
 
-        # --------------------------------------------------------
         # SECAO 1: Exportar para Arquivo
-        # --------------------------------------------------------
-        sec1_hdr = tk.Frame(container, bg=C_CARD2)
-        sec1_hdr.pack(fill=tk.X)
-
-        tk.Label(
-            sec1_hdr, text="  Exportar para Arquivo",
-            bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
-            anchor="w", pady=8,
-        ).pack(fill=tk.X)
-
-        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X)
-
+        self._report_section(container, "Exportar para Arquivo")
         sec1_body = tk.Frame(container, bg=C_BG)
-        sec1_body.pack(fill=tk.X, padx=12, pady=10)
+        sec1_body.pack(fill=tk.X, padx=16, pady=10)
 
-        # Selecao de formato via radio button
-        tk.Label(
-            sec1_body, text="Formato:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
+        tk.Label(sec1_body, text="Formato:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
 
         self._report_fmt = tk.StringVar(value="json")
         radio_row = tk.Frame(sec1_body, bg=C_BG)
         radio_row.pack(fill=tk.X, pady=(3, 10))
-
         for fmt_opt in ("json", "csv", "html"):
             tk.Radiobutton(
-                radio_row,
-                text=fmt_opt.upper(),
-                variable=self._report_fmt,
-                value=fmt_opt,
-                bg=C_BG, fg=C_TEXT,
-                selectcolor=C_CARD2,
-                activebackground=C_BG,
-                activeforeground=C_TEXT,
-                highlightthickness=0,
-                font=FONT_SMALL,
+                radio_row, text=fmt_opt.upper(),
+                variable=self._report_fmt, value=fmt_opt,
+                bg=C_BG, fg=C_TEXT, selectcolor=C_CARD2,
+                activebackground=C_BG, activeforeground=C_TEXT,
+                highlightthickness=0, font=FONT_SMALL,
             ).pack(side=tk.LEFT, padx=(0, 14))
 
-        # Caminho de destino do arquivo
-        tk.Label(
-            sec1_body, text="Destino:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
+        tk.Label(sec1_body, text="Destino:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
 
         self._report_path_var = tk.StringVar()
         path_row = tk.Frame(sec1_body, bg=C_BG)
         path_row.pack(fill=tk.X, pady=(3, 10))
+        tk.Entry(path_row, textvariable=self._report_path_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self._make_flat_btn(path_row, "Buscar",
+                            self._browse_report_path).pack(side=tk.LEFT, padx=(4, 0))
 
-        tk.Entry(
-            path_row,
-            textvariable=self._report_path_var,
-            bg=C_CARD, fg=C_TEXT,
-            insertbackground=C_TEXT,
-            relief="flat", font=FONT_MONO,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
-
-        self._make_flat_btn(
-            path_row, "Buscar", self._browse_report_path,
-        ).pack(side=tk.LEFT, padx=(4, 0))
-
-        # Botao de exportacao; inicia desabilitado
         export_row = tk.Frame(sec1_body, bg=C_BG)
         export_row.pack(fill=tk.X)
-
         self._btn_export = tk.Label(
-            export_row,
-            text="Exportar",
-            bg=C_CARD2, fg=C_DIM,
-            font=FONT_SMALL, padx=14, pady=4,
-            cursor="arrow", relief="flat",
-        )
+            export_row, text="Exportar", bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4, cursor="arrow", relief="flat")
         self._btn_export.pack(side=tk.RIGHT)
         self._btn_export.bind("<Button-1>", lambda e: self._do_export())
 
-        # --------------------------------------------------------
         # SECAO 2: Enviar para API
-        # --------------------------------------------------------
-        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X, pady=(10, 0))
-
-        sec2_hdr = tk.Frame(container, bg=C_CARD2)
-        sec2_hdr.pack(fill=tk.X)
-
-        tk.Label(
-            sec2_hdr, text="  Enviar para API",
-            bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
-            anchor="w", pady=8,
-        ).pack(fill=tk.X)
-
-        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X)
-
+        self._report_section(container, "Enviar para API")
         sec2_body = tk.Frame(container, bg=C_BG)
-        sec2_body.pack(fill=tk.X, padx=12, pady=10)
+        sec2_body.pack(fill=tk.X, padx=16, pady=10)
 
-        # Dropdown de metodo HTTP
-        tk.Label(
-            sec2_body, text="Metodo HTTP:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
-
+        tk.Label(sec2_body, text="Metodo HTTP:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
         self._api_method_var = tk.StringVar(value="POST")
-        method_cb = ttk.Combobox(
-            sec2_body,
-            textvariable=self._api_method_var,
-            values=["POST", "PUT", "PATCH"],
-            state="readonly",
-            style="App.TCombobox",
-            font=FONT_SMALL,
-            width=10,
-        )
-        method_cb.pack(anchor="w", pady=(3, 10))
+        ttk.Combobox(sec2_body, textvariable=self._api_method_var,
+                     values=["POST", "PUT", "PATCH"], state="readonly",
+                     style="App.TCombobox", font=FONT_SMALL, width=10).pack(
+                         anchor="w", pady=(3, 10))
 
-        # URL da API
-        tk.Label(
-            sec2_body, text="URL:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
-
+        tk.Label(sec2_body, text="URL:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
         self._api_url_var = tk.StringVar()
-        tk.Entry(
-            sec2_body,
-            textvariable=self._api_url_var,
-            bg=C_CARD, fg=C_TEXT,
-            insertbackground=C_TEXT,
-            relief="flat", font=FONT_MONO,
-        ).pack(fill=tk.X, pady=(3, 10), ipady=4)
+        tk.Entry(sec2_body, textvariable=self._api_url_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(fill=tk.X, pady=(3, 10), ipady=4)
 
-        # Chave de acesso (mascarada)
-        tk.Label(
-            sec2_body, text="Chave de Acesso:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
-
+        tk.Label(sec2_body, text="Chave de Acesso:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
         self._api_key_var = tk.StringVar()
-        tk.Entry(
-            sec2_body,
-            textvariable=self._api_key_var,
-            bg=C_CARD, fg=C_TEXT,
-            insertbackground=C_TEXT,
-            relief="flat", font=FONT_MONO,
-            show="*",
-        ).pack(fill=tk.X, pady=(3, 10), ipady=4)
+        tk.Entry(sec2_body, textvariable=self._api_key_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO, show="*").pack(
+                     fill=tk.X, pady=(3, 10), ipady=4)
 
-        # Botao de envio; inicia desabilitado
         send_row = tk.Frame(sec2_body, bg=C_BG)
         send_row.pack(fill=tk.X)
-
         self._btn_send = tk.Label(
-            send_row,
-            text="Enviar",
-            bg=C_CARD2, fg=C_DIM,
-            font=FONT_SMALL, padx=14, pady=4,
-            cursor="arrow", relief="flat",
-        )
+            send_row, text="Enviar", bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4, cursor="arrow", relief="flat")
         self._btn_send.pack(side=tk.RIGHT)
         self._btn_send.bind("<Button-1>", lambda e: self._do_send_api())
 
-        # --------------------------------------------------------
         # SECAO 3: Converter JSON para HTML
-        # --------------------------------------------------------
-        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X, pady=(10, 0))
-
-        sec3_hdr = tk.Frame(container, bg=C_CARD2)
-        sec3_hdr.pack(fill=tk.X)
-
-        tk.Label(
-            sec3_hdr, text="  Converter JSON para HTML",
-            bg=C_CARD2, fg=C_ACCENT, font=FONT_GRP,
-            anchor="w", pady=8,
-        ).pack(fill=tk.X)
-
-        tk.Frame(container, bg=C_BORDER, height=1).pack(fill=tk.X)
-
+        self._report_section(container, "Converter JSON para HTML")
         sec3_body = tk.Frame(container, bg=C_BG)
-        sec3_body.pack(fill=tk.X, padx=12, pady=10)
+        sec3_body.pack(fill=tk.X, padx=16, pady=10)
 
-        # Origem: arquivo unico ou pasta (relatorio consolidado)
-        tk.Label(
-            sec3_body, text="Origem:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
-
+        tk.Label(sec3_body, text="Origem:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
         self._convert_mode = tk.StringVar(value="file")
         convert_radio_row = tk.Frame(sec3_body, bg=C_BG)
         convert_radio_row.pack(fill=tk.X, pady=(3, 10))
-
-        tk.Radiobutton(
-            convert_radio_row, text="Arquivo JSON",
+        tk.Radiobutton(convert_radio_row, text="Arquivo JSON",
             variable=self._convert_mode, value="file",
             bg=C_BG, fg=C_TEXT, selectcolor=C_CARD2,
             activebackground=C_BG, activeforeground=C_TEXT,
-            highlightthickness=0, font=FONT_SMALL,
-        ).pack(side=tk.LEFT, padx=(0, 14))
-
-        tk.Radiobutton(
-            convert_radio_row, text="Pasta (varios JSONs)",
+            highlightthickness=0, font=FONT_SMALL).pack(side=tk.LEFT, padx=(0, 14))
+        tk.Radiobutton(convert_radio_row, text="Pasta (varios JSONs)",
             variable=self._convert_mode, value="folder",
             bg=C_BG, fg=C_TEXT, selectcolor=C_CARD2,
             activebackground=C_BG, activeforeground=C_TEXT,
-            highlightthickness=0, font=FONT_SMALL,
-        ).pack(side=tk.LEFT)
+            highlightthickness=0, font=FONT_SMALL).pack(side=tk.LEFT)
 
-        # Caminho de origem
-        tk.Label(
-            sec3_body, text="Caminho:",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w",
-        ).pack(fill=tk.X)
-
+        tk.Label(sec3_body, text="Caminho:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
         self._convert_path_var = tk.StringVar()
         convert_path_row = tk.Frame(sec3_body, bg=C_BG)
         convert_path_row.pack(fill=tk.X, pady=(3, 4))
+        tk.Entry(convert_path_row, textvariable=self._convert_path_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self._make_flat_btn(convert_path_row, "Buscar",
+                            self._browse_convert_path).pack(side=tk.LEFT, padx=(4, 0))
 
-        tk.Entry(
-            convert_path_row,
-            textvariable=self._convert_path_var,
-            bg=C_CARD, fg=C_TEXT,
-            insertbackground=C_TEXT,
-            relief="flat", font=FONT_MONO,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        tk.Label(sec3_body,
+                 text="Pasta gera um unico HTML consolidado, com cada maquina e "
+                      "suas secoes na barra lateral.",
+                 bg=C_BG, fg=C_DIM, font=FONT_SMALL,
+                 anchor="w", justify="left", wraplength=420).pack(
+                     fill=tk.X, pady=(0, 8))
 
-        self._make_flat_btn(
-            convert_path_row, "Buscar", self._browse_convert_path,
-        ).pack(side=tk.LEFT, padx=(4, 0))
-
-        tk.Label(
-            sec3_body,
-            text="Pasta gera um unico HTML consolidado, com cada"
-                 " maquina e suas secoes na barra lateral.",
-            bg=C_BG, fg=C_DIM, font=FONT_SMALL,
-            anchor="w", justify="left", wraplength=390,
-        ).pack(fill=tk.X, pady=(0, 8))
-
-        # Botao de conversao; inicia desabilitado
         convert_row = tk.Frame(sec3_body, bg=C_BG)
         convert_row.pack(fill=tk.X)
-
         self._btn_convert = tk.Label(
-            convert_row,
-            text="Converter",
-            bg=C_CARD2, fg=C_DIM,
-            font=FONT_SMALL, padx=14, pady=4,
-            cursor="arrow", relief="flat",
-        )
+            convert_row, text="Converter", bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4, cursor="arrow", relief="flat")
         self._btn_convert.pack(side=tk.RIGHT)
         self._btn_convert.bind("<Button-1>", lambda e: self._do_convert())
 
-        # Traces para reatividade dos botoes
         self._report_path_var.trace("w",  self._update_export_btn)
         self._api_url_var.trace("w",      self._update_send_btn)
         self._api_key_var.trace("w",      self._update_send_btn)
@@ -992,8 +1083,16 @@ class GUI:
 
         scroll.bind_children_scroll()
 
+    def _report_section(self, parent, title):
+        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X, pady=(10, 0))
+        hdr = tk.Frame(parent, bg=C_CARD2)
+        hdr.pack(fill=tk.X)
+        tk.Label(hdr, text=f"  {title}", bg=C_CARD2, fg=C_ACCENT,
+                 font=FONT_GRP, anchor="w", pady=8).pack(fill=tk.X)
+        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X)
+
     # ============================================================
-    # CALLBACKS DA ABA RELATORIOS
+    # CALLBACKS DA PAGINA RELATORIOS
     # ============================================================
     def _browse_report_path(self):
         fmt     = self._report_fmt.get()
@@ -1009,26 +1108,22 @@ class GUI:
             self._report_path_var.set(path)
 
     def _set_btn_active(self, btn):
-        """Ativa visualmente o botao e configura hover."""
         btn.config(bg=C_ACCENT, fg="white", cursor="hand2")
         btn.bind("<Enter>", lambda e: btn.config(bg=C_ACCENT2))
         btn.bind("<Leave>", lambda e: btn.config(bg=C_ACCENT))
 
     def _set_btn_inactive(self, btn):
-        """Desativa visualmente o botao e remove hover."""
         btn.config(bg=C_CARD2, fg=C_DIM, cursor="arrow")
         btn.bind("<Enter>", lambda e: None)
         btn.bind("<Leave>", lambda e: None)
 
     def _update_export_btn(self, *_):
-        """Ativa o botao Exportar apenas quando o caminho de destino esta preenchido."""
         if self._report_path_var.get().strip():
             self._set_btn_active(self._btn_export)
         else:
             self._set_btn_inactive(self._btn_export)
 
     def _update_send_btn(self, *_):
-        """Ativa o botao Enviar apenas quando URL e chave estao preenchidos."""
         url_ok = bool(self._api_url_var.get().strip())
         key_ok = bool(self._api_key_var.get().strip())
         if url_ok and key_ok:
@@ -1037,7 +1132,6 @@ class GUI:
             self._set_btn_inactive(self._btn_send)
 
     def _do_export(self):
-        """Aciona a exportacao do relatorio se o botao estiver ativo."""
         path = self._report_path_var.get().strip()
         fmt  = self._report_fmt.get()
         if not path:
@@ -1045,7 +1139,6 @@ class GUI:
         self.app.export_report(fmt, path)
 
     def _do_send_api(self):
-        """Aciona o envio para a API se URL e chave estiverem preenchidos."""
         url = self._api_url_var.get().strip()
         key = self._api_key_var.get().strip()
         if not url or not key:
@@ -1056,25 +1149,20 @@ class GUI:
     def _browse_convert_path(self):
         if self._convert_mode.get() == "folder":
             path = filedialog.askdirectory(
-                title="Selecione a pasta com os arquivos JSON",
-            )
+                title="Selecione a pasta com os arquivos JSON")
         else:
             path = filedialog.askopenfilename(
-                title="Selecione o JSON",
-                filetypes=[("JSON", "*.json")],
-            )
+                title="Selecione o JSON", filetypes=[("JSON", "*.json")])
         if path:
             self._convert_path_var.set(path)
 
     def _update_convert_btn(self, *_):
-        """Ativa o botao Converter apenas quando a origem esta preenchida."""
         if self._convert_path_var.get().strip():
             self._set_btn_active(self._btn_convert)
         else:
             self._set_btn_inactive(self._btn_convert)
 
     def _do_convert(self):
-        """Aciona a conversao de JSON(s) para HTML se o botao estiver ativo."""
         path = self._convert_path_var.get().strip()
         if not path:
             return
@@ -1082,34 +1170,40 @@ class GUI:
         self.app.convert_json_to_html(path, is_folder)
 
     # ============================================================
-    # PAINEL DE LOG
+    # TERMINAL DOCKADO (colapsavel)
     # ============================================================
-    def _build_log_panel(self, parent):
-        log_outer = tk.Frame(parent, bg=C_BG)
-        log_outer.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    def _build_terminal_dock(self, parent):
+        tk.Frame(parent, bg=C_BORDER, height=1).pack(fill=tk.X)
 
-        log_hdr = tk.Frame(log_outer, bg=C_CARD2, height=36)
-        log_hdr.pack(fill=tk.X)
-        log_hdr.pack_propagate(False)
+        dock = tk.Frame(parent, bg=C_BG)
+        dock.pack(fill=tk.X, side=tk.BOTTOM)
 
-        tk.Label(log_hdr, text="Log de Execucao", bg=C_CARD2, fg=C_DIM,
-                 font=FONT_SMALL, padx=10).pack(side=tk.LEFT, pady=8)
-        self._make_flat_btn(log_hdr, "Limpar",
-                            self._clear_log).pack(side=tk.RIGHT, padx=8, pady=6)
+        # Cabecalho do terminal (sempre visivel)
+        hdr = tk.Frame(dock, bg=C_CARD2, height=32)
+        hdr.pack(fill=tk.X)
+        hdr.pack_propagate(False)
 
-        tk.Frame(log_outer, bg=C_BORDER, height=1).pack(fill=tk.X)
+        self._term_toggle = tk.Label(
+            hdr, text="▾  Terminal", bg=C_CARD2, fg=C_TEXT,
+            font=FONT_SMALL, padx=10, cursor="hand2")
+        self._term_toggle.pack(side=tk.LEFT, pady=6)
+        self._term_toggle.bind("<Button-1>", lambda e: self._toggle_terminal())
+
+        self._make_flat_btn(hdr, "Limpar",
+                            self._clear_log).pack(side=tk.RIGHT, padx=8, pady=5)
+
+        # Corpo do terminal (log + comando) com altura fixa
+        self._term_body = tk.Frame(dock, bg=C_LOG_BG, height=240)
+        self._term_body.pack(fill=tk.X)
+        self._term_body.pack_propagate(False)
 
         self.log_box = scrolledtext.ScrolledText(
-            log_outer,
+            self._term_body,
             bg=C_LOG_BG, fg=C_LOG_FG, font=FONT_MONO,
             state="disabled", relief="flat", borderwidth=0, wrap="none",
         )
         self.log_box.pack(fill=tk.BOTH, expand=True)
 
-        # --------------------------------------------------------
-        # TAGS DE CORES DO TERMINAL
-        # Prioridade: palavras-chave na linha definem a cor
-        # --------------------------------------------------------
         self.log_box.tag_configure("base",    foreground=C_LOG_FG)
         self.log_box.tag_configure("header",  foreground="#ffffff",
                                               font=("Consolas", 9, "bold"))
@@ -1121,10 +1215,8 @@ class GUI:
         self.log_box.tag_configure("section", foreground="#aaaacc",
                                               font=("Consolas", 9, "bold"))
 
-        tk.Frame(log_outer, bg=C_BORDER, height=1).pack(fill=tk.X)
-
-        cmd_frame = tk.Frame(log_outer, bg=C_CARD2, height=36)
-        cmd_frame.pack(fill=tk.X)
+        cmd_frame = tk.Frame(self._term_body, bg=C_CARD2, height=34)
+        cmd_frame.pack(fill=tk.X, side=tk.BOTTOM)
         cmd_frame.pack_propagate(False)
 
         self._PLACEHOLDER = "Digite um comando (ex: ipconfig)"
@@ -1141,7 +1233,16 @@ class GUI:
         self.cmd_entry.bind("<Tab>",      self._autocomplete)
 
         self._make_flat_btn(cmd_frame, "Enviar",
-                            self._send_command).pack(side=tk.RIGHT, padx=8, pady=6)
+                            self._send_command).pack(side=tk.RIGHT, padx=8, pady=5)
+
+    def _toggle_terminal(self):
+        self._term_expanded = not self._term_expanded
+        if self._term_expanded:
+            self._term_body.pack(fill=tk.X)
+            self._term_toggle.config(text="▾  Terminal")
+        else:
+            self._term_body.pack_forget()
+            self._term_toggle.config(text="▸  Terminal")
 
     def _clear_log(self):
         self.log_box.config(state="normal")
@@ -1164,8 +1265,7 @@ class GUI:
 
         self.progress = ttk.Progressbar(
             bar, style="App.Horizontal.TProgressbar",
-            mode="indeterminate", length=160,
-        )
+            mode="indeterminate", length=160)
         self.progress.pack(side=tk.RIGHT, padx=10, pady=5)
 
     def progress_start(self, label="Executando..."):
@@ -1189,44 +1289,34 @@ class GUI:
         self.root.after(40, self._poll_log_queue)
 
     def _classify_line(self, text):
-        """
-        Determina a tag de cor da linha com base em palavras-chave.
-        Ordem: mais especifico primeiro.
-        """
         lower = text.lower()
 
-        # Cabecalhos gerados por log_title (linhas com == ou >>)
         if "==" in text and len(text.strip()) > 4:
             stripped = text.strip()
             if stripped.startswith("=") or stripped.startswith("  >>"):
                 return "header"
 
-        # Separador de secao (linhas com --)
         if text.strip().startswith("--") and len(text.strip()) > 3:
             return "section"
 
-        # Permissao negada (varios idiomas / codigos comuns)
         if any(k in lower for k in (
             "access denied", "acesso negado", "access is denied",
             "permissao negada", "permission denied", "5)", "error 5"
         )):
             return "denied"
 
-        # Erros
         if any(k in lower for k in (
             "[erro]", "error", "failed", "falhou", "falha",
             "nao foi possivel", "could not", "cannot", "0x"
         )):
             return "error"
 
-        # Avisos / warnings
         if any(k in lower for k in (
             "[aviso]", "[atencao]", "warning", "aviso", "atencao",
             "deprecated", "obsoleto"
         )):
             return "warn"
 
-        # Sucesso / ok
         if any(k in lower for k in (
             "[ok]", "sucesso", "success", "concluido", "concluida",
             "finalizado", "completed", "100%", "repaired", "reparado",
@@ -1234,7 +1324,6 @@ class GUI:
         )):
             return "ok"
 
-        # Informacao
         if any(k in lower for k in (
             "[info]", "informacao", "iniciando", "iniciado", "starting",
             "passo ", "sequencia"
@@ -1254,7 +1343,7 @@ class GUI:
         self._append_log(text)
 
     # ============================================================
-    # TERMINAL
+    # TERMINAL: comando customizado
     # ============================================================
     def _cmd_focus_in(self, _event):
         if self.cmd_entry.get() == self._PLACEHOLDER:
@@ -1271,6 +1360,8 @@ class GUI:
         if not cmd or cmd == self._PLACEHOLDER:
             return
         self.cmd_entry.delete(0, tk.END)
+        if not self._term_expanded:
+            self._toggle_terminal()
         threading.Thread(
             target=self.app.run_custom_command,
             args=(cmd,),
