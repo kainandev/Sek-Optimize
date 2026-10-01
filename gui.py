@@ -1,10 +1,17 @@
 import sys
 import os
 import json
+import time
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from collections import defaultdict
+
+try:
+    import psutil
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
 
 from config import ACTIONS, AUTOCOMPLETE_COMMANDS, VERSION_SOFTWARE, GROUPS_FILE, DEFAULT_GROUPS, CREDITS
 
@@ -152,6 +159,7 @@ class GUI:
 
         self._show_page("Visao Geral")
         self._poll_log_queue()
+        self._start_dashboard_updates()
 
     # ============================================================
     # JANELA
@@ -220,6 +228,26 @@ class GUI:
         tk.Label(logo_wrap, text=f"v{VERSION_SOFTWARE}", bg=C_PANEL, fg=C_MUTED,
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 0), pady=14)
 
+        # Busca rapida de acoes
+        search_wrap = tk.Frame(hdr, bg=C_CARD, highlightthickness=1,
+                               highlightbackground=C_BORDER)
+        search_wrap.pack(side=tk.LEFT, padx=24, pady=10)
+        tk.Label(search_wrap, text="\U0001f50d", bg=C_CARD, fg=C_MUTED,
+                 font=FONT_SMALL).pack(side=tk.LEFT, padx=(8, 2))
+        self._SEARCH_PH = "Buscar acao..."
+        self._search_entry = tk.Entry(
+            search_wrap, bg=C_CARD, fg=C_DIM, insertbackground=C_TEXT,
+            relief="flat", font=FONT_SMALL, width=30)
+        self._search_entry.pack(side=tk.LEFT, padx=(0, 8), pady=4)
+        self._search_entry.insert(0, self._SEARCH_PH)
+        self._search_entry.bind("<FocusIn>",  self._search_focus_in)
+        self._search_entry.bind("<FocusOut>", self._search_focus_out)
+        self._search_entry.bind("<KeyRelease>", self._on_search)
+        self._search_entry.bind("<Return>",     self._search_enter)
+        self._search_entry.bind("<Escape>",     lambda e: self._hide_search_popup())
+        self._search_popup = None
+        self._search_results = []
+
         btn_about = tk.Label(
             hdr, text="Sobre o Software", bg=C_PANEL, fg=C_DIM,
             font=FONT_SMALL, padx=14, cursor="hand2",
@@ -272,6 +300,96 @@ class GUI:
         self._make_flat_btn(body, "Fechar", win.destroy).pack(anchor="e", pady=(14, 0))
 
     # ============================================================
+    # BUSCA RAPIDA DE ACOES
+    # ============================================================
+    def _search_focus_in(self, _e):
+        if self._search_entry.get() == self._SEARCH_PH:
+            self._search_entry.delete(0, tk.END)
+            self._search_entry.config(fg=C_TEXT)
+
+    def _search_focus_out(self, _e):
+        if not self._search_entry.get():
+            self._search_entry.insert(0, self._SEARCH_PH)
+            self._search_entry.config(fg=C_DIM)
+
+    def _search_matches(self, query):
+        """Retorna lista de (idx, categoria, label) que casam com a busca."""
+        q = query.strip().lower()
+        if not q:
+            return []
+        out = []
+        for idx, action in ACTIONS.items():
+            label = action["label"]
+            if q in label.lower() or q in action["tab"].lower():
+                out.append((idx, action["tab"], label))
+        out.sort(key=lambda t: t[2].lower())
+        return out
+
+    def _on_search(self, event=None):
+        if event and event.keysym in ("Return", "Escape", "Up", "Down"):
+            return
+        text = self._search_entry.get()
+        if text == self._SEARCH_PH:
+            text = ""
+        self._search_results = self._search_matches(text)[:10]
+        if not self._search_results:
+            self._hide_search_popup()
+            return
+        self._show_search_popup()
+
+    def _show_search_popup(self):
+        if self._search_popup is None:
+            self._search_popup = tk.Toplevel(self.root)
+            self._search_popup.overrideredirect(True)
+            self._search_popup.configure(bg=C_BORDER)
+            self._search_listbox = tk.Listbox(
+                self._search_popup, bg=C_CARD, fg=C_TEXT,
+                selectbackground=C_ACCENT, selectforeground="white",
+                font=FONT_SMALL, relief="flat", borderwidth=0,
+                highlightthickness=0, activestyle="none", height=10)
+            self._search_listbox.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+            self._search_listbox.bind("<<ListboxSelect>>",
+                                      lambda e: self._search_pick())
+            self._search_listbox.bind("<Return>",
+                                      lambda e: self._search_pick())
+
+        self._search_listbox.delete(0, tk.END)
+        for _idx, cat, label in self._search_results:
+            self._search_listbox.insert(tk.END, f"  {cat}  ›  {label}")
+
+        self.root.update_idletasks()
+        x = self._search_entry.winfo_rootx()
+        y = self._search_entry.winfo_rooty() + self._search_entry.winfo_height() + 4
+        w = max(self._search_entry.winfo_width() + 40, 320)
+        h = min(len(self._search_results), 10) * 20 + 4
+        self._search_popup.geometry(f"{w}x{h}+{x}+{y}")
+        self._search_popup.deiconify()
+
+    def _hide_search_popup(self):
+        if self._search_popup is not None:
+            self._search_popup.withdraw()
+
+    def _search_enter(self, _e=None):
+        if self._search_results:
+            if not self._search_listbox.curselection():
+                self._search_listbox.selection_set(0)
+            self._search_pick()
+
+    def _search_pick(self):
+        sel = self._search_listbox.curselection()
+        if not sel or sel[0] >= len(self._search_results):
+            return
+        idx, cat, _label = self._search_results[sel[0]]
+        self._hide_search_popup()
+        self._show_page(cat)
+        if idx in self.check_vars:
+            self.check_vars[idx].set(True)
+        self._search_entry.delete(0, tk.END)
+        self._search_entry.insert(0, self._SEARCH_PH)
+        self._search_entry.config(fg=C_DIM)
+        self.root.focus_set()
+
+    # ============================================================
     # CORPO: sidebar | area direita
     # ============================================================
     def _build_body(self):
@@ -307,8 +425,10 @@ class GUI:
 
         # Ferramentas
         self._add_nav_section(nav, "FERRAMENTAS")
-        self._add_nav_item(nav, "Grupos",     "❏")
-        self._add_nav_item(nav, "Relatorios", "▧")
+        self._add_nav_item(nav, "Grupos",          "❏")
+        self._add_nav_item(nav, "Relatorios",      "▧")
+        self._add_nav_item(nav, "E-mail",          "✉")
+        self._add_nav_item(nav, "Banco de Dados",  "▤")
 
         scroll.bind_children_scroll()
 
@@ -399,6 +519,8 @@ class GUI:
             self._build_action_page(cat)
         self._build_page_grupos()
         self._build_page_relatorios()
+        self._build_page_email()
+        self._build_page_database()
 
     # ============================================================
     # ROTEAMENTO DE PAGINAS
@@ -426,58 +548,149 @@ class GUI:
             self._action_bar.pack_forget()
 
     # ============================================================
-    # PAGINA: VISAO GERAL (placeholder enxuto; dashboard vem na Fase 2)
+    # PAGINA: VISAO GERAL (dashboard com medidores ao vivo)
     # ============================================================
     def _build_page_dashboard(self):
         page = tk.Frame(self._content, bg=C_BG)
         self.pages["Visao Geral"] = page
 
         self._page_title(page, "Visao Geral",
-                         "Resumo do sistema e atalhos principais")
+                         "Monitoramento em tempo real e atalhos principais")
 
         scroll = ScrollableFrame(page, bg=C_BG)
         scroll.pack(fill=tk.BOTH, expand=True)
         inner = scroll.inner
 
-        card = tk.Frame(inner, bg=C_CARD)
-        card.pack(fill=tk.X, padx=16, pady=12)
+        # --- Medidores ao vivo ---
+        meters = tk.Frame(inner, bg=C_BG)
+        meters.pack(fill=tk.X, padx=10, pady=(12, 4))
+        for c in range(4):
+            meters.columnconfigure(c, weight=1, uniform="m")
 
-        tk.Label(card, text="Bem-vindo ao Sek Optimize",
-                 bg=C_CARD, fg=C_ACCENT, font=FONT_H2,
-                 anchor="w", padx=16).pack(fill=tk.X, pady=(14, 4))
-        tk.Label(card,
-                 text=("Selecione uma categoria na barra lateral para ver as acoes "
-                       "disponiveis.\nO detalhamento completo do hardware e impresso "
-                       "no terminal ao abrir o programa."),
-                 bg=C_CARD, fg=C_DIM, font=FONT_NORM,
-                 anchor="w", justify="left", padx=16).pack(fill=tk.X, pady=(0, 14))
+        self._dash = {}
+        self._dash["cpu"]  = self._make_meter(meters, "CPU")
+        self._dash["ram"]  = self._make_meter(meters, "Memoria RAM")
+        self._dash["disk"] = self._make_meter(meters, "Disco C:")
+        self._dash["net"]  = self._make_meter(meters, "Rede")
+        for i, key in enumerate(("cpu", "ram", "disk", "net")):
+            self._dash[key]["card"].grid(row=0, column=i, sticky="nsew", padx=6, pady=6)
 
-        # Contagem rapida de acoes por categoria
+        # --- Info do sistema ---
+        info_card = tk.Frame(inner, bg=C_CARD, highlightthickness=1,
+                             highlightbackground=C_BORDER)
+        info_card.pack(fill=tk.X, padx=16, pady=(8, 4))
+        tk.Label(info_card, text="Sistema", bg=C_CARD, fg=C_ACCENT,
+                 font=FONT_GRP, anchor="w").pack(fill=tk.X, padx=14, pady=(10, 4))
+        self._dash_info = tk.Label(
+            info_card, text="Coletando...", bg=C_CARD, fg=C_DIM,
+            font=FONT_MONO, anchor="w", justify="left")
+        self._dash_info.pack(fill=tk.X, padx=14, pady=(0, 12))
+
+        # --- Atalhos por categoria ---
+        tk.Label(inner, text="Categorias", bg=C_BG, fg=C_MUTED,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X, padx=16, pady=(6, 0))
         grid = tk.Frame(inner, bg=C_BG)
         grid.pack(fill=tk.X, padx=10)
-        grid.columnconfigure(0, weight=1, uniform="d")
-        grid.columnconfigure(1, weight=1, uniform="d")
-        grid.columnconfigure(2, weight=1, uniform="d")
+        for c in range(4):
+            grid.columnconfigure(c, weight=1, uniform="d")
 
         counts = defaultdict(int)
         for a in ACTIONS.values():
             counts[a["tab"]] += 1
 
         for pos, cat in enumerate(sorted(counts.keys())):
-            r, c = divmod(pos, 3)
-            tile = tk.Frame(grid, bg=C_CARD, cursor="hand2")
+            r, c = divmod(pos, 4)
+            tile = tk.Frame(grid, bg=C_CARD, cursor="hand2",
+                            highlightthickness=1, highlightbackground=C_BORDER)
             tile.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
             tk.Label(tile, text=CATEGORY_ICONS.get(cat, "▪"),
-                     bg=C_CARD, fg=C_ACCENT, font=("Segoe UI Symbol", 18)).pack(
-                         anchor="w", padx=14, pady=(12, 0))
+                     bg=C_CARD, fg=C_ACCENT, font=("Segoe UI Symbol", 16)).pack(
+                         anchor="w", padx=12, pady=(10, 0))
             tk.Label(tile, text=cat, bg=C_CARD, fg=C_TEXT,
-                     font=FONT_NORM, anchor="w").pack(fill=tk.X, padx=14)
+                     font=FONT_NORM, anchor="w").pack(fill=tk.X, padx=12)
             tk.Label(tile, text=f"{counts[cat]} acoes", bg=C_CARD, fg=C_DIM,
-                     font=FONT_SMALL, anchor="w").pack(fill=tk.X, padx=14, pady=(0, 12))
+                     font=FONT_SMALL, anchor="w").pack(fill=tk.X, padx=12, pady=(0, 10))
             for w in (tile, *tile.winfo_children()):
                 w.bind("<Button-1>", lambda e, n=cat: self._show_page(n))
 
         scroll.bind_children_scroll()
+
+    def _make_meter(self, parent, title):
+        card = tk.Frame(parent, bg=C_CARD, highlightthickness=1,
+                        highlightbackground=C_BORDER)
+        tk.Label(card, text=title, bg=C_CARD, fg=C_DIM, font=FONT_SMALL,
+                 anchor="w").pack(fill=tk.X, padx=12, pady=(10, 0))
+        val = tk.Label(card, text="--", bg=C_CARD, fg=C_TEXT,
+                       font=("Segoe UI", 17, "bold"), anchor="w")
+        val.pack(fill=tk.X, padx=12)
+        sub = tk.Label(card, text="", bg=C_CARD, fg=C_MUTED, font=FONT_TINY,
+                       anchor="w")
+        sub.pack(fill=tk.X, padx=12)
+        cv = tk.Canvas(card, height=6, bg=C_CARD2, highlightthickness=0)
+        cv.pack(fill=tk.X, padx=12, pady=(6, 12))
+        return {"card": card, "val": val, "sub": sub, "cv": cv}
+
+    def _set_meter(self, m, pct, value_text, sub_text=""):
+        pct = max(0.0, min(100.0, pct))
+        m["val"].config(text=value_text)
+        m["sub"].config(text=sub_text)
+        color = C_SUCCESS if pct < 60 else (C_WARNING if pct < 85 else C_DANGER)
+        cv = m["cv"]
+        cv.delete("bar")
+        w = cv.winfo_width() or 180
+        cv.create_rectangle(0, 0, int(w * pct / 100), 6,
+                            fill=color, width=0, tags="bar")
+
+    def _start_dashboard_updates(self):
+        self._net_last = None
+        self._update_dashboard()
+
+    def _update_dashboard(self):
+        if _HAS_PSUTIL and getattr(self, "_dash", None):
+            try:
+                cpu = psutil.cpu_percent(None)
+                self._set_meter(self._dash["cpu"], cpu, f"{cpu:.0f}%",
+                                f"{psutil.cpu_count(logical=True)} threads")
+
+                vm = psutil.virtual_memory()
+                self._set_meter(self._dash["ram"], vm.percent, f"{vm.percent:.0f}%",
+                                f"{vm.used/(1024**3):.1f} / {vm.total/(1024**3):.1f} GB")
+
+                sysdrive = os.environ.get("SystemDrive", "C:") + "\\"
+                du = psutil.disk_usage(sysdrive)
+                self._set_meter(self._dash["disk"], du.percent, f"{du.percent:.0f}%",
+                                f"{du.used/(1024**3):.0f} / {du.total/(1024**3):.0f} GB")
+
+                io = psutil.net_io_counters()
+                now = time.time()
+                total = io.bytes_sent + io.bytes_recv
+                if self._net_last:
+                    dt = now - self._net_last[1]
+                    mbps = ((total - self._net_last[0]) * 8 / 1_000_000) / dt if dt > 0 else 0
+                    self._set_meter(self._dash["net"], min(mbps, 100),
+                                    f"{mbps:.1f} Mbps", "trafego total")
+                self._net_last = (total, now)
+
+                self._dash_info.config(text=self._system_info_text())
+            except Exception:
+                pass
+        self.root.after(1500, self._update_dashboard)
+
+    def _system_info_text(self):
+        try:
+            import platform, socket, getpass
+            boot = time.time() - psutil.boot_time()
+            up = time.strftime("%Hh %Mm", time.gmtime(boot))
+            return (
+                f"Maquina    : {socket.gethostname()}   "
+                f"Usuario : {getpass.getuser()}\n"
+                f"Sistema    : {platform.system()} {platform.release()} "
+                f"(build {platform.version()})\n"
+                f"Processador: {platform.processor()[:60]}\n"
+                f"Uptime     : {up}"
+            )
+        except Exception:
+            return ""
 
     # ============================================================
     # PAGINAS DE ACOES (cards em grade de 2 colunas)
@@ -1168,6 +1381,282 @@ class GUI:
             return
         is_folder = self._convert_mode.get() == "folder"
         self.app.convert_json_to_html(path, is_folder)
+
+    # ============================================================
+    # PAGINA: E-MAIL (conversao PST/OST/MBOX)
+    # ============================================================
+    def _build_page_email(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["E-mail"] = page
+
+        self._page_title(page, "E-mail",
+                         "Converter caixas de correio entre formatos")
+
+        scroll = ScrollableFrame(page, bg=C_BG)
+        scroll.pack(fill=tk.BOTH, expand=True)
+        body = scroll.inner
+
+        # Explicacao
+        note = tk.Frame(body, bg=C_CARD2)
+        note.pack(fill=tk.X, padx=16, pady=(12, 4))
+        tk.Label(
+            note,
+            text=("Leitura de PST/OST e feita direto do arquivo, sem precisar do "
+                  "Outlook.\nComo o Thunderbird importa MBOX nativamente, use MBOX "
+                  "para levar e-mails ao Thunderbird.\nGravar em PST requer o "
+                  "Microsoft Outlook instalado (melhor esforco)."),
+            bg=C_CARD2, fg=C_DIM, font=FONT_SMALL,
+            anchor="w", justify="left", padx=12, pady=10).pack(fill=tk.X)
+
+        form = tk.Frame(body, bg=C_BG)
+        form.pack(fill=tk.X, padx=16, pady=10)
+
+        # Origem
+        tk.Label(form, text="Arquivo de origem (.pst / .ost / .mbox):",
+                 bg=C_BG, fg=C_DIM, font=FONT_SMALL, anchor="w").pack(fill=tk.X)
+        self._email_src_var = tk.StringVar()
+        src_row = tk.Frame(form, bg=C_BG)
+        src_row.pack(fill=tk.X, pady=(3, 10))
+        tk.Entry(src_row, textvariable=self._email_src_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self._make_flat_btn(src_row, "Buscar",
+                            self._browse_email_src).pack(side=tk.LEFT, padx=(4, 0))
+
+        # Formato de destino
+        tk.Label(form, text="Converter para:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
+        self._email_dst_fmt = tk.StringVar(value="mbox")
+        fmt_row = tk.Frame(form, bg=C_BG)
+        fmt_row.pack(fill=tk.X, pady=(3, 10))
+        for val, txt in (("mbox", "MBOX (Thunderbird)"),
+                         ("eml",  "EML (pasta)"),
+                         ("pst",  "PST (requer Outlook)")):
+            tk.Radiobutton(
+                fmt_row, text=txt, variable=self._email_dst_fmt, value=val,
+                bg=C_BG, fg=C_TEXT, selectcolor=C_CARD2,
+                activebackground=C_BG, activeforeground=C_TEXT,
+                highlightthickness=0, font=FONT_SMALL,
+                command=self._email_dst_hint).pack(side=tk.LEFT, padx=(0, 14))
+
+        # Destino
+        tk.Label(form, text="Destino:", bg=C_BG, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w").pack(fill=tk.X)
+        self._email_dst_var = tk.StringVar()
+        dst_row = tk.Frame(form, bg=C_BG)
+        dst_row.pack(fill=tk.X, pady=(3, 4))
+        tk.Entry(dst_row, textvariable=self._email_dst_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True, ipady=4)
+        self._make_flat_btn(dst_row, "Buscar",
+                            self._browse_email_dst).pack(side=tk.LEFT, padx=(4, 0))
+
+        self._email_hint = tk.Label(
+            form, text="", bg=C_BG, fg=C_MUTED, font=FONT_TINY, anchor="w")
+        self._email_hint.pack(fill=tk.X, pady=(0, 8))
+
+        conv_row = tk.Frame(form, bg=C_BG)
+        conv_row.pack(fill=tk.X)
+        self._btn_email = tk.Label(
+            conv_row, text="Converter", bg=C_CARD2, fg=C_DIM,
+            font=FONT_SMALL, padx=14, pady=4, cursor="arrow", relief="flat")
+        self._btn_email.pack(side=tk.RIGHT)
+        self._btn_email.bind("<Button-1>", lambda e: self._do_email_convert())
+
+        self._email_src_var.trace("w", self._update_email_btn)
+        self._email_dst_var.trace("w", self._update_email_btn)
+        self._email_dst_hint()
+
+        scroll.bind_children_scroll()
+
+    def _email_dst_hint(self):
+        fmt = self._email_dst_fmt.get()
+        hints = {
+            "mbox": "Gera um unico arquivo .mbox (importavel pelo Thunderbird).",
+            "eml":  "Gera uma pasta com um arquivo .eml por mensagem.",
+            "pst":  "Gera um .pst via Outlook (assunto/remetente/corpo/anexos).",
+        }
+        self._email_hint.config(text=hints.get(fmt, ""))
+
+    def _browse_email_src(self):
+        path = filedialog.askopenfilename(
+            title="Selecione o arquivo de e-mail",
+            filetypes=[("E-mail", "*.pst *.ost *.mbox *.mbx"),
+                       ("Todos", "*.*")])
+        if path:
+            self._email_src_var.set(path)
+
+    def _browse_email_dst(self):
+        fmt = self._email_dst_fmt.get()
+        if fmt == "eml":
+            path = filedialog.askdirectory(title="Pasta de destino para os .eml")
+        elif fmt == "pst":
+            path = filedialog.asksaveasfilename(
+                title="Salvar PST", defaultextension=".pst",
+                filetypes=[("PST", "*.pst")], initialfile="convertido.pst")
+        else:
+            path = filedialog.asksaveasfilename(
+                title="Salvar MBOX", defaultextension=".mbox",
+                filetypes=[("MBOX", "*.mbox"), ("Todos", "*.*")],
+                initialfile="convertido.mbox")
+        if path:
+            self._email_dst_var.set(path)
+
+    def _update_email_btn(self, *_):
+        if self._email_src_var.get().strip() and self._email_dst_var.get().strip():
+            self._set_btn_active(self._btn_email)
+        else:
+            self._set_btn_inactive(self._btn_email)
+
+    def _do_email_convert(self):
+        src = self._email_src_var.get().strip()
+        dst = self._email_dst_var.get().strip()
+        if not src or not dst:
+            return
+        fmt = self._email_dst_fmt.get()
+        self._show_terminal_if_hidden()
+        self.app.email_convert(src, fmt, dst)
+
+    # ============================================================
+    # PAGINA: BANCO DE DADOS (SQLite)
+    # ============================================================
+    def _build_page_database(self):
+        page = tk.Frame(self._content, bg=C_BG)
+        self.pages["Banco de Dados"] = page
+
+        self._page_title(page, "Banco de Dados",
+                         "Abrir um arquivo SQLite e executar comandos SQL")
+
+        # Barra de abertura
+        openbar = tk.Frame(page, bg=C_CARD2, height=44)
+        openbar.pack(fill=tk.X)
+        openbar.pack_propagate(False)
+
+        self._db_path_var = tk.StringVar()
+        tk.Entry(openbar, textvariable=self._db_path_var,
+                 bg=C_CARD, fg=C_TEXT, insertbackground=C_TEXT,
+                 relief="flat", font=FONT_MONO).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 4), pady=8, ipady=3)
+        self._make_flat_btn(openbar, "Buscar",
+                            self._browse_db).pack(side=tk.LEFT, pady=8)
+        self._make_accent_btn(openbar, "Abrir",
+                              self._open_db).pack(side=tk.LEFT, padx=(4, 10), pady=7)
+
+        pane = tk.Frame(page, bg=C_BG)
+        pane.pack(fill=tk.BOTH, expand=True)
+
+        # Lista de tabelas
+        left = tk.Frame(pane, bg=C_CARD2, width=190)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        left.pack_propagate(False)
+        tk.Label(left, text="Tabelas", bg=C_CARD2, fg=C_DIM,
+                 font=FONT_SMALL, anchor="w", padx=10, pady=6).pack(fill=tk.X)
+        tk.Frame(left, bg=C_BORDER, height=1).pack(fill=tk.X)
+        self._db_tables = tk.Listbox(
+            left, bg=C_CARD2, fg=C_TEXT,
+            selectbackground="#1e3050", selectforeground=C_TEXT,
+            font=FONT_NORM, relief="flat", borderwidth=0,
+            highlightthickness=0, activestyle="none")
+        self._db_tables.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        self._db_tables.bind("<<ListboxSelect>>", self._on_db_table_select)
+
+        tk.Frame(pane, bg=C_BORDER, width=1).pack(side=tk.LEFT, fill=tk.Y)
+
+        right = tk.Frame(pane, bg=C_BG)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Editor SQL
+        tk.Label(right, text="SQL:", bg=C_BG, fg=C_DIM, font=FONT_SMALL,
+                 anchor="w", padx=8, pady=4).pack(fill=tk.X)
+        self._db_sql = tk.Text(
+            right, height=4, bg=C_LOG_BG, fg=C_TEXT, insertbackground=C_TEXT,
+            relief="flat", font=FONT_MONO, wrap="word",
+            highlightthickness=1, highlightbackground=C_BORDER)
+        self._db_sql.pack(fill=tk.X, padx=8)
+
+        runbar = tk.Frame(right, bg=C_BG)
+        runbar.pack(fill=tk.X, padx=8, pady=6)
+        self._db_status = tk.Label(runbar, text="Nenhum banco aberto.",
+                                   bg=C_BG, fg=C_MUTED, font=FONT_SMALL, anchor="w")
+        self._db_status.pack(side=tk.LEFT)
+        self._make_accent_btn(runbar, "Executar SQL",
+                              self._run_db_query).pack(side=tk.RIGHT)
+
+        # Grade de resultados
+        grid_wrap = tk.Frame(right, bg=C_BG)
+        grid_wrap.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        yscroll = ttk.Scrollbar(grid_wrap, orient="vertical",
+                                style="App.Vertical.TScrollbar")
+        xscroll = ttk.Scrollbar(grid_wrap, orient="horizontal")
+        self._db_tree = ttk.Treeview(
+            grid_wrap, style="App.Treeview", show="headings",
+            yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        yscroll.config(command=self._db_tree.yview)
+        xscroll.config(command=self._db_tree.xview)
+        yscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        xscroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self._db_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    def _browse_db(self):
+        path = filedialog.askopenfilename(
+            title="Selecione o banco SQLite",
+            filetypes=[("SQLite", "*.db *.sqlite *.sqlite3 *.db3"),
+                       ("Todos", "*.*")])
+        if path:
+            self._db_path_var.set(path)
+
+    def _open_db(self):
+        path = self._db_path_var.get().strip()
+        if not path:
+            return
+        ok, msg = self.app.db_connect(path)
+        self._db_status.config(text=msg, fg=C_SUCCESS if ok else C_DANGER)
+        self._db_tables.delete(0, tk.END)
+        if ok:
+            for t in self.app.db_tables():
+                n = self.app.db_row_count(t)
+                self._db_tables.insert(tk.END, f"{t}  ({n})")
+
+    def _on_db_table_select(self, _event):
+        sel = self._db_tables.curselection()
+        if not sel or not self.app.db_is_open():
+            return
+        raw = self._db_tables.get(sel[0])
+        table = raw.rsplit("  (", 1)[0]
+        safe = '"' + table.replace('"', '""') + '"'
+        self._db_sql.delete("1.0", tk.END)
+        self._db_sql.insert("1.0", f"SELECT * FROM {safe} LIMIT 200;")
+        self._run_db_query()
+
+    def _run_db_query(self):
+        if not self.app.db_is_open():
+            self._db_status.config(text="Abra um banco primeiro.", fg=C_WARNING)
+            return
+        sql = self._db_sql.get("1.0", tk.END).strip()
+        res = self.app.db_query(sql)
+        if not res.get("ok"):
+            self._db_status.config(text=res.get("error", "Erro."), fg=C_DANGER)
+            return
+        self._db_status.config(text=res.get("info", ""), fg=C_SUCCESS)
+        self._fill_db_tree(res.get("columns", []), res.get("rows", []))
+
+    def _fill_db_tree(self, columns, rows):
+        tree = self._db_tree
+        tree.delete(*tree.get_children())
+        tree["columns"] = columns
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=140, minwidth=60, anchor="w", stretch=False)
+        for row in rows:
+            values = ["" if v is None else str(v) for v in row]
+            tree.insert("", tk.END, values=values)
+
+    def _show_terminal_if_hidden(self):
+        if not self._term_expanded:
+            self._toggle_terminal()
 
     # ============================================================
     # TERMINAL DOCKADO (colapsavel)

@@ -1,0 +1,7 @@
+# Dependencias do Sek Optimize (Windows)
+psutil
+WMI
+pywin32
+py-cpuinfo
+openpyxl
+libpff-python   # leitura de PST/OST sem Outlook (modulo: pypff)
