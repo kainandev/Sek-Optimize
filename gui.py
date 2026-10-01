@@ -2555,24 +2555,11 @@ class GUI:
         self._term_body.pack(fill=tk.X)
         self._term_body.pack_propagate(False)
 
-        self.log_box = scrolledtext.ScrolledText(
-            self._term_body,
-            bg=C_LOG_BG, fg=C_LOG_FG, font=FONT_MONO,
-            state="disabled", relief="flat", borderwidth=0, wrap="none",
-        )
-        self.log_box.pack(fill=tk.BOTH, expand=True)
-
-        self.log_box.tag_configure("base",    foreground=C_LOG_FG)
-        self.log_box.tag_configure("header",  foreground="#ffffff",
-                                              font=("Consolas", 9, "bold"))
-        self.log_box.tag_configure("info",    foreground="#60a8ff")
-        self.log_box.tag_configure("ok",      foreground=C_SUCCESS)
-        self.log_box.tag_configure("warn",    foreground=C_WARNING)
-        self.log_box.tag_configure("error",   foreground=C_DANGER)
-        self.log_box.tag_configure("denied",  foreground="#c060ff")
-        self.log_box.tag_configure("section", foreground="#aaaacc",
-                                              font=("Consolas", 9, "bold"))
-
+        # IMPORTANTE: a linha de comando (altura fixa) e empacotada ANTES do log
+        # para reservar seu espaco; o log (expand) preenche o restante. Se o log
+        # fosse empacotado primeiro com expand, engoliria toda a altura e a
+        # entrada de comando ficaria com 0px (invisivel).
+        #
         # Linha de comando integrada ao fundo do terminal (estilo VS Code):
         # prompt mostrando o diretorio + entrada sem moldura, mesmo fundo do log.
         cmd_frame = tk.Frame(self._term_body, bg=C_LOG_BG, height=28)
@@ -2598,6 +2585,25 @@ class GUI:
         self._cmd_history = []
         self._cmd_hist_idx = 0
         self._refresh_prompt()
+
+        # Log do terminal: empacotado por ultimo, preenche o espaco restante.
+        self.log_box = scrolledtext.ScrolledText(
+            self._term_body,
+            bg=C_LOG_BG, fg=C_LOG_FG, font=FONT_MONO,
+            state="disabled", relief="flat", borderwidth=0, wrap="none",
+        )
+        self.log_box.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.log_box.tag_configure("base",    foreground=C_LOG_FG)
+        self.log_box.tag_configure("header",  foreground="#ffffff",
+                                              font=("Consolas", 9, "bold"))
+        self.log_box.tag_configure("info",    foreground="#60a8ff")
+        self.log_box.tag_configure("ok",      foreground=C_SUCCESS)
+        self.log_box.tag_configure("warn",    foreground=C_WARNING)
+        self.log_box.tag_configure("error",   foreground=C_DANGER)
+        self.log_box.tag_configure("denied",  foreground="#c060ff")
+        self.log_box.tag_configure("section", foreground="#aaaacc",
+                                              font=("Consolas", 9, "bold"))
 
     def _toggle_terminal(self):
         self._term_expanded = not self._term_expanded
