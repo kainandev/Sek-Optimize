@@ -587,6 +587,22 @@ class GUI:
         for i, key in enumerate(("cpu", "ram", "disk", "net")):
             self._dash[key]["card"].grid(row=0, column=i, sticky="nsew", padx=6, pady=6)
 
+        # --- Grafico historico (CPU / RAM) ---
+        hist_card = tk.Frame(inner, bg=C_CARD, highlightthickness=1,
+                             highlightbackground=C_BORDER)
+        hist_card.pack(fill=tk.X, padx=16, pady=(8, 4))
+        head = tk.Frame(hist_card, bg=C_CARD)
+        head.pack(fill=tk.X, padx=14, pady=(10, 2))
+        tk.Label(head, text="Historico (ultimos ~3 min)", bg=C_CARD, fg=C_ACCENT,
+                 font=FONT_GRP).pack(side=tk.LEFT)
+        tk.Label(head, text="● CPU", bg=C_CARD, fg=C_ACCENT,
+                 font=FONT_TINY).pack(side=tk.RIGHT, padx=(8, 0))
+        tk.Label(head, text="● RAM", bg=C_CARD, fg=C_SUCCESS,
+                 font=FONT_TINY).pack(side=tk.RIGHT)
+        self._hist_canvas = tk.Canvas(hist_card, height=120, bg=C_LOG_BG,
+                                      highlightthickness=0)
+        self._hist_canvas.pack(fill=tk.X, padx=14, pady=(2, 12))
+
         # --- Info do sistema ---
         info_card = tk.Frame(inner, bg=C_CARD, highlightthickness=1,
                              highlightbackground=C_BORDER)
@@ -655,7 +671,33 @@ class GUI:
 
     def _start_dashboard_updates(self):
         self._net_last = None
+        self._hist_cpu = []
+        self._hist_ram = []
         self._update_dashboard()
+
+    def _draw_history(self):
+        cv = getattr(self, "_hist_canvas", None)
+        if cv is None:
+            return
+        cv.delete("all")
+        w = cv.winfo_width() or 600
+        h = cv.winfo_height() or 120
+        # Linhas de grade horizontais (25/50/75%)
+        for frac in (0.25, 0.5, 0.75):
+            y = h * frac
+            cv.create_line(0, y, w, y, fill=C_BORDER)
+        for series, color in ((self._hist_cpu, C_ACCENT),
+                              (self._hist_ram, C_SUCCESS)):
+            n = len(series)
+            if n < 2:
+                continue
+            step = w / (max(n, 2) - 1)
+            pts = []
+            for i, val in enumerate(series):
+                x = i * step
+                y = h - (max(0, min(100, val)) / 100.0) * h
+                pts.extend((x, y))
+            cv.create_line(*pts, fill=color, width=2, smooth=True)
 
     def _update_dashboard(self):
         if _HAS_PSUTIL and getattr(self, "_dash", None):
@@ -682,6 +724,14 @@ class GUI:
                     self._set_meter(self._dash["net"], min(mbps, 100),
                                     f"{mbps:.1f} Mbps", "trafego total")
                 self._net_last = (total, now)
+
+                # Historico para o grafico (cap ~120 amostras)
+                self._hist_cpu.append(cpu)
+                self._hist_ram.append(vm.percent)
+                if len(self._hist_cpu) > 120:
+                    self._hist_cpu.pop(0)
+                    self._hist_ram.pop(0)
+                self._draw_history()
 
                 self._dash_info.config(text=self._system_info_text())
             except Exception:
