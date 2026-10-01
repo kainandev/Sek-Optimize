@@ -314,14 +314,3 @@ class Optmize(App):
         self.clean_temp()
         self.flush_dns()
         self.log_ok("Otimizacao completa finalizada!")
-
-    # ============================================================
-    # MAS - executa em janela externa separada
-    # ============================================================
-    def run_massgrave(self):
-        self.log_info("Abrindo Microsoft Activation Scripts (MAS)...")
-        cmd = (
-            r'start "" cmd.exe /c powershell -NoLogo -NoProfile -Command '
-            r'"iwr -useb https://get.activated.win | iex"'
-        )
-        subprocess.Popen(cmd, shell=True)

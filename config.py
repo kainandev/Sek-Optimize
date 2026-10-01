@@ -789,18 +789,11 @@ ACTIONS = {
         "handler": "show_hosts_file",
     },
 
-    # --- Diagnostico ---
-    19: {
-        "label": "Executar MAS",
-        "description": "Executa Microsoft Activation Scripts em janela externa.",
-        "tab": "Ativacao",
-        "danger": True,
-        "handler": "run_massgrave",
-    },
+    # --- Ativacao ---
     65: {
         "label": "Status de Ativacao do Windows",
         "description": "Mostra status detalhado e prazo de ativacao da licenca (slmgr /dlv + /xpr).",
-        "tab": "Ativacao",
+        "tab": "Sistema",
         "danger": False,
         "handler": "check_activation_status",
     },
