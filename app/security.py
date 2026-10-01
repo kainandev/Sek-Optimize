@@ -181,6 +181,95 @@ class Security(App):
         novo = content.rstrip() + f"\n0.0.0.0 {domain}\n0.0.0.0 www.{domain}\n"
         return self.hosts_save(novo)
 
+    # ============================================================
+    # CHAVE DE PRODUTO DO WINDOWS
+    # Duas fontes:
+    #   1) Chave OEM embutida no firmware (UEFI/BIOS) via WMI.
+    #   2) Chave instalada, decodificada de HKLM ...\DigitalProductId.
+    # Util para recuperar a licenca da propria maquina.
+    # ============================================================
+    def check_windows_key(self):
+        self.log_title("Chave de Produto do Windows")
+        self._progress_start("Lendo chave de produto...")
+        try:
+            oem = self._get_oem_key()
+            if oem:
+                self.log_info(f"Chave OEM (firmware)   : {oem}")
+            else:
+                self.log_info("Chave OEM (firmware)   : nao encontrada "
+                              "(maquina sem chave OEM no UEFI/BIOS).")
+
+            inst = self._get_installed_key()
+            if inst:
+                self.log_info(f"Chave instalada (reg.) : {inst}")
+            else:
+                self.log_info("Chave instalada (reg.) : nao foi possivel decodificar.")
+
+            self.log("")
+            self.log_warn("A chave OEM nem sempre coincide com a chave instalada "
+                          "(ex.: Windows atualizado ou licenca digital/conta MS).")
+        except Exception as e:
+            self.log_error(str(e))
+        finally:
+            self._progress_stop()
+            self.log_sep()
+            self.log_ok("Concluido.")
+            self.log("")
+
+    def _get_oem_key(self):
+        try:
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command',
+                 '(Get-CimInstance -ClassName SoftwareLicensingService)'
+                 '.OA3xOriginalProductKey'],
+                capture_output=True, timeout=20,
+            )
+            return self._decode(result.stdout).strip() or None
+        except Exception:
+            return None
+
+    def _get_installed_key(self):
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
+            try:
+                data, _t = winreg.QueryValueEx(key, "DigitalProductId")
+            finally:
+                winreg.CloseKey(key)
+            return self._decode_product_key(bytes(data))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _decode_product_key(digital_product_id):
+        """Decodifica a chave de produto (compativel com Win7 e Win8/10/11)."""
+        digits = "BCDFGHJKMPQRTVWXY2346789"
+        dpid = bytearray(digital_product_id)
+        if len(dpid) < 67:
+            return None
+        is_win8 = (dpid[66] // 6) & 1
+        dpid[66] = (dpid[66] & 0xF7) | ((is_win8 & 2) * 4)
+
+        pkey = ""
+        current = 0
+        for _i in range(24, -1, -1):
+            current = 0
+            for j in range(14, -1, -1):
+                current = current * 256 + dpid[j + 52]
+                dpid[j + 52] = current // 24
+                current = current % 24
+            pkey = digits[current] + pkey
+
+        if is_win8 == 1:
+            keypart1 = pkey[1:current + 1]
+            keypart2 = pkey[current + 1:]
+            pkey = keypart1 + "N" + keypart2
+
+        pkey = pkey[:25]
+        return "-".join(pkey[i:i + 5] for i in range(0, 25, 5))
+
     def check_bitlocker_status(self):
         self.run_command("Status do BitLocker", COMMANDS["check_bitlocker_status"])
 

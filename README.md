@@ -9,9 +9,9 @@
   -+=..         .-+++++++++++++++++-.    Tipo              : Otimizador / Diagnóstico
  .=+-.          :-:.......:==+++++=:.    Execução          : Script (.py) / EXE (PyInstaller)
  .++-...--                  .++=..%%:    Arquitetura       : x64
- .++.:%%%..                 ::...=%%:.   Licença           : MIT
+ .++.:%%%..                 ::...=%%:.   Licença           : GNU GPL v3
  .:#%%%%%%*-......:=+-          .*%%..   Status            : Em desenvolvimento
-  +%%%%%%%%%%%%%%%%%*.          .%%+.    Última versão     : 0.2.0
+  +%%%%%%%%%%%%%%%%%*.          .%%+.    Última versão     : 0.3.0
   .#%%%%%%%%%%%%%%%*.          .%%#.     Repositório       : github.com/kainansantos/sek-optimize
   ..#%%%%%%%%%%%%*:.         .:#%#..
     .*%%%%%##*=:.          ..*%%*..      +   Módulos    + : + ------------------------------- +
@@ -37,6 +37,10 @@
 - **Editor de código** estilo Notepad++: abrir pasta/arquivo com destaque de
   sintaxe (palavras-chave, strings, comentários, números e colchetes).
 - **Editor do arquivo HOSTS** e bloqueio de domínios.
+- **Terminal integrado** estilo VS Code: colapsável, com prompt do diretório
+  atual, `cd` persistente, histórico de comandos e `cls`/`clear`.
+- **Chave de produto do Windows**: extrai a licença OEM do firmware e a chave
+  instalada decodificada do registro.
 - Busca rápida de ações e verificador de atualização.
 
 **Sek Optimize** é uma ferramenta gráfica em Python para **otimização, manutenção e diagnóstico do Windows**, focada em desempenho, estabilidade e praticidade para técnicos e usuários avançados.

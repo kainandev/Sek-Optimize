@@ -470,9 +470,8 @@ class GUI:
         side.pack(side=tk.LEFT, fill=tk.Y)
         side.pack_propagate(False)
 
-        scroll = ScrollableFrame(side, bg=C_SIDEBAR)
-        scroll.pack(fill=tk.BOTH, expand=True)
-        nav = scroll.inner
+        # Itens fixos e em numero reduzido: nao precisa de scroll.
+        nav = side
 
         # Principal
         self._add_nav_item(nav, "Visao Geral", "◉", top=8)
@@ -490,8 +489,6 @@ class GUI:
         self._add_nav_item(nav, "Servicos",        "⚙")
         self._add_nav_item(nav, "Disco",           "◴")
         self._add_nav_item(nav, "Editor",          "✎")
-
-        scroll.bind_children_scroll()
 
     def _add_nav_section(self, parent, text):
         tk.Label(parent, text=text, bg=C_SIDEBAR, fg=C_MUTED,
@@ -2537,19 +2534,21 @@ class GUI:
         dock = tk.Frame(parent, bg=C_BG)
         dock.pack(fill=tk.X, side=tk.BOTTOM)
 
-        # Cabecalho do terminal (sempre visivel)
-        hdr = tk.Frame(dock, bg=C_CARD2, height=32)
+        # Cabecalho do terminal (sempre visivel) - estilo VS Code
+        hdr = tk.Frame(dock, bg=C_CARD2, height=30)
         hdr.pack(fill=tk.X)
         hdr.pack_propagate(False)
 
         self._term_toggle = tk.Label(
-            hdr, text="▾  Terminal", bg=C_CARD2, fg=C_TEXT,
-            font=FONT_SMALL, padx=10, cursor="hand2")
-        self._term_toggle.pack(side=tk.LEFT, pady=6)
+            hdr, text="▾  TERMINAL", bg=C_CARD2, fg=C_TEXT,
+            font=("Segoe UI", 9, "bold"), padx=10, cursor="hand2")
+        self._term_toggle.pack(side=tk.LEFT, pady=5)
         self._term_toggle.bind("<Button-1>", lambda e: self._toggle_terminal())
+        # Barra de acento sob a aba ativa (estilo VS Code)
+        tk.Frame(hdr, bg=C_ACCENT, width=1).pack(side=tk.LEFT, fill=tk.Y)
 
-        self._make_flat_btn(hdr, "Limpar",
-                            self._clear_log).pack(side=tk.RIGHT, padx=8, pady=5)
+        self._make_flat_btn(hdr, "✕  Limpar",
+                            self._clear_log).pack(side=tk.RIGHT, padx=8, pady=4)
 
         # Corpo do terminal (log + comando) com altura fixa
         self._term_body = tk.Frame(dock, bg=C_LOG_BG, height=240)
@@ -2574,25 +2573,31 @@ class GUI:
         self.log_box.tag_configure("section", foreground="#aaaacc",
                                               font=("Consolas", 9, "bold"))
 
-        cmd_frame = tk.Frame(self._term_body, bg=C_CARD2, height=34)
+        # Linha de comando integrada ao fundo do terminal (estilo VS Code):
+        # prompt mostrando o diretorio + entrada sem moldura, mesmo fundo do log.
+        cmd_frame = tk.Frame(self._term_body, bg=C_LOG_BG, height=28)
         cmd_frame.pack(fill=tk.X, side=tk.BOTTOM)
         cmd_frame.pack_propagate(False)
 
-        self._PLACEHOLDER = "Digite um comando (ex: ipconfig)"
-        self.cmd_entry = tk.Entry(
-            cmd_frame, bg=C_LOG_BG, fg=C_DIM,
-            insertbackground=C_LOG_FG, font=FONT_MONO,
-            relief="flat", borderwidth=0,
-        )
-        self.cmd_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8, pady=6)
-        self.cmd_entry.insert(0, self._PLACEHOLDER)
-        self.cmd_entry.bind("<FocusIn>",  self._cmd_focus_in)
-        self.cmd_entry.bind("<FocusOut>", self._cmd_focus_out)
-        self.cmd_entry.bind("<Return>",   self._send_command)
-        self.cmd_entry.bind("<Tab>",      self._autocomplete)
+        self._term_prompt = tk.Label(
+            cmd_frame, text="> ", bg=C_LOG_BG, fg=C_LOG_FG,
+            font=FONT_MONO, padx=6)
+        self._term_prompt.pack(side=tk.LEFT)
 
-        self._make_flat_btn(cmd_frame, "Enviar",
-                            self._send_command).pack(side=tk.RIGHT, padx=8, pady=5)
+        self.cmd_entry = tk.Entry(
+            cmd_frame, bg=C_LOG_BG, fg=C_TEXT,
+            insertbackground=C_LOG_FG, font=FONT_MONO,
+            relief="flat", borderwidth=0, highlightthickness=0,
+        )
+        self.cmd_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.cmd_entry.bind("<Return>",    self._send_command)
+        self.cmd_entry.bind("<Tab>",       self._autocomplete)
+        self.cmd_entry.bind("<Up>",        self._history_prev)
+        self.cmd_entry.bind("<Down>",      self._history_next)
+
+        self._cmd_history = []
+        self._cmd_hist_idx = 0
+        self._refresh_prompt()
 
     def _toggle_terminal(self):
         self._term_expanded = not self._term_expanded
@@ -2639,12 +2644,17 @@ class GUI:
     # POLLING DA FILA DE LOG
     # ============================================================
     def _poll_log_queue(self):
+        got = False
         try:
             for _ in range(50):
                 msg = self.app.log_queue.get_nowait()
                 self._append_log(msg)
+                got = True
         except Exception:
             pass
+        # Mantem o prompt do terminal em sincronia com o diretorio atual (apos 'cd')
+        if got and hasattr(self, "_term_prompt"):
+            self._refresh_prompt()
         self.root.after(40, self._poll_log_queue)
 
     def _classify_line(self, text):
@@ -2702,34 +2712,63 @@ class GUI:
         self._append_log(text)
 
     # ============================================================
-    # TERMINAL: comando customizado
+    # TERMINAL: comando customizado (estilo VS Code)
     # ============================================================
-    def _cmd_focus_in(self, _event):
-        if self.cmd_entry.get() == self._PLACEHOLDER:
-            self.cmd_entry.delete(0, tk.END)
-            self.cmd_entry.config(fg=C_LOG_FG)
-
-    def _cmd_focus_out(self, _event):
-        if not self.cmd_entry.get():
-            self.cmd_entry.insert(0, self._PLACEHOLDER)
-            self.cmd_entry.config(fg=C_DIM)
+    def _refresh_prompt(self):
+        """Atualiza o prompt com o diretorio atual do terminal."""
+        try:
+            cwd = getattr(self.app, "_term_cwd", "")
+        except Exception:
+            cwd = ""
+        txt = f"{cwd}> " if cwd else "> "
+        if self._term_prompt.cget("text") != txt:
+            self._term_prompt.config(text=txt)
 
     def _send_command(self, _event=None):
         cmd = self.cmd_entry.get().strip()
-        if not cmd or cmd == self._PLACEHOLDER:
+        if not cmd:
             return
         self.cmd_entry.delete(0, tk.END)
         if not self._term_expanded:
             self._toggle_terminal()
+
+        # historico de comandos
+        self._cmd_history.append(cmd)
+        self._cmd_hist_idx = len(self._cmd_history)
+
+        # cls/clear limpam o terminal localmente (como no VS Code)
+        if cmd.lower() in ("cls", "clear"):
+            self._clear_log()
+            self._refresh_prompt()
+            return
+
         threading.Thread(
             target=self.app.run_custom_command,
             args=(cmd,),
             daemon=True,
         ).start()
+        self.root.after(200, self._refresh_prompt)
+
+    def _history_prev(self, _event=None):
+        if not self._cmd_history:
+            return "break"
+        self._cmd_hist_idx = max(0, self._cmd_hist_idx - 1)
+        self.cmd_entry.delete(0, tk.END)
+        self.cmd_entry.insert(0, self._cmd_history[self._cmd_hist_idx])
+        return "break"
+
+    def _history_next(self, _event=None):
+        if not self._cmd_history:
+            return "break"
+        self._cmd_hist_idx = min(len(self._cmd_history), self._cmd_hist_idx + 1)
+        self.cmd_entry.delete(0, tk.END)
+        if self._cmd_hist_idx < len(self._cmd_history):
+            self.cmd_entry.insert(0, self._cmd_history[self._cmd_hist_idx])
+        return "break"
 
     def _autocomplete(self, _event):
         text = self.cmd_entry.get().strip()
-        if not text or text == self._PLACEHOLDER:
+        if not text:
             return "break"
         matches = [c for c in AUTOCOMPLETE_COMMANDS if c.startswith(text)]
         if not matches:

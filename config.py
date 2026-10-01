@@ -23,7 +23,7 @@ from collections import defaultdict
 
 from util.system_details import *
 
-VERSION_SOFTWARE = "0.2.1"
+VERSION_SOFTWARE = "0.3.0"
 
 APP_ASCII = [
 "           .:===++++++===:.           ",
@@ -868,6 +868,13 @@ ACTIONS = {
         "tab": "Monitor",
         "danger": False,
         "handler": "unexpected_reboots",
+    },
+    76: {
+        "label": "Chave de Produto do Windows",
+        "description": "Extrai a chave de licenca do Windows: OEM do firmware (UEFI/BIOS) e a chave instalada decodificada do registro.",
+        "tab": "Seguranca",
+        "danger": False,
+        "handler": "check_windows_key",
     },
 }
 

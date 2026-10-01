@@ -1,3 +1,4 @@
+import os
 import sys
 
 # Bibliotecas Windows-only tratadas como opcionais
@@ -21,8 +22,10 @@ import psutil
 
 # ============================================================
 # BLOQUEIO DE INSTANCIA UNICA (Windows)
+# Pode ser desativado com a variavel de ambiente SEK_NO_SINGLETON=1
+# (util para desenvolvimento e testes automatizados).
 # ============================================================
-if _HAS_WMI:
+if _HAS_WMI and not os.environ.get("SEK_NO_SINGLETON"):
     _mutex = win32event.CreateMutex(None, False, "SekOptimizeMutex")
     if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
         sys.exit(0)

@@ -29,6 +29,9 @@ class App:
         # Flag de alto nivel consultada antes de aceitar novas execucoes.
         self._is_running = False
 
+        # Diretorio de trabalho do terminal (persiste entre comandos, igual ao VS Code).
+        self._term_cwd = os.getcwd()
+
         # show_fetch() e chamado por main.py apos set_gui() estar pronto.
 
     def set_gui(self, gui):
@@ -217,6 +220,17 @@ class App:
     # EXECUCAO DE COMANDO DO TERMINAL DA GUI
     # ============================================================
     def run_custom_command(self, command):
+        command = (command or "").strip()
+        if not command:
+            return
+
+        # Eco do prompt (estilo VS Code: "<cwd>> comando")
+        self.log(f"{self._term_cwd}> {command}")
+
+        # 'cd' e tratado internamente para persistir o diretorio entre comandos.
+        if self._handle_cd(command):
+            return
+
         if self._is_running:
             self.log_warn("Aguarde a execucao atual terminar.")
             return
@@ -224,12 +238,12 @@ class App:
         def _run():
             self._is_running = True
             self._progress_start(command)
-            self.log_title(f"Terminal > {command}")
             try:
                 full_cmd = _CMD_UTF8_PREFIX + command
                 proc = subprocess.Popen(
                     full_cmd,
                     shell=True,
+                    cwd=self._term_cwd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     bufsize=0,
@@ -251,6 +265,38 @@ class App:
                 self.log("")
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def _handle_cd(self, command):
+        """
+        Trata 'cd' internamente para que o diretorio persista entre comandos.
+        Retorna True se o comando era um 'cd' (ja tratado), False caso contrario.
+        """
+        low = command.lower()
+        if low != "cd" and not low.startswith("cd ") and not low.startswith("cd.."):
+            return False
+
+        arg = command[2:].strip().strip('"')
+
+        if not arg:
+            # 'cd' sozinho: mostra o diretorio atual
+            self.log(self._term_cwd)
+            return True
+
+        if arg in ("..", "..\\", "../"):
+            novo = os.path.dirname(self._term_cwd)
+        elif arg in ("~",):
+            novo = os.path.expanduser("~")
+        elif os.path.isabs(arg) or (len(arg) >= 2 and arg[1] == ":"):
+            novo = arg
+        else:
+            novo = os.path.join(self._term_cwd, arg)
+
+        novo = os.path.normpath(novo)
+        if os.path.isdir(novo):
+            self._term_cwd = novo
+        else:
+            self.log_error(f"O sistema nao pode encontrar o caminho: {arg}")
+        return True
 
     # ============================================================
     # EXECUCAO DE ACOES (botoes / checkboxes)
