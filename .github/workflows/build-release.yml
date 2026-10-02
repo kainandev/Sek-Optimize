@@ -49,14 +49,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          gh release view $tag 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
+          gh release view $tag *> $null
+          $existe = ($LASTEXITCODE -eq 0)
+          if ($existe) {
             Write-Host "Release $tag ja existe - pulando build/release."
             echo "exists=true" >> $env:GITHUB_OUTPUT
           } else {
             Write-Host "Release $tag ainda nao existe - prosseguindo."
             echo "exists=false" >> $env:GITHUB_OUTPUT
           }
+          # gh release view retorna codigo != 0 quando a release nao existe;
+          # zeramos para o passo nao falhar por causa disso.
+          $global:LASTEXITCODE = 0
+          exit 0
 
       - name: Compilar executavel
         if: steps.check.outputs.exists == 'false'
